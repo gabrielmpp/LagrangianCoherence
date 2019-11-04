@@ -1,1 +1,1 @@
-from LCS import *
+from LCS.LCS import *
