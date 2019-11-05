@@ -117,7 +117,8 @@ class LCS:
         :return: xr.DataArray of the deformation tensor
         """
 
-        x_departure, y_departure = parcel_propagation(u, v, timestep, propdim=self.timedim, subtimes_len=self.subtimes_len)
+        x_departure, y_departure = parcel_propagation(u, v, timestep, propdim=self.timedim,
+                                                      subtimes_len=self.subtimes_len)
         # u, v, eigengrid = interpolate_c_stagger(u, v)
         conversion_dydx = xr.apply_ufunc(lambda x: np.cos(x * np.pi / 180), y_departure.latitude)
         conversion_dxdy = xr.apply_ufunc(lambda x: np.cos(x * np.pi / 180), x_departure.latitude)
@@ -202,42 +203,40 @@ class LCS:
         return def_tensor
 
 
-def parcel_propagation(u, v, timestep, propdim="time", verbose=True, subtimes_len=10):
+def parcel_propagation(U, V, timestep, propdim="time", verbose=True, subtimes_len=10):
     """
     Method to propagate the parcel given u and v
 
     :param propdim: str, dimension name for time
     :param timestep: double, timestep in seconds
-    :param u: xr.DataArray zonal wind
-    :param v: xr.DataArray meridional wind
+    :param U: xr.DataArray zonal wind
+    :param V: xr.DataArray meridional wind
     :return: tuple of xr.DataArrays containing the final positions of the trajectories
     """
     verboseprint = print if verbose else lambda *a, **k: None
 
-
-    u.latitude.values = (90 + u.latitude.values) * np.pi/180
-    u.longitude.values = (180 + u.longitude.values) * np.pi/180
-    v.latitude.values = (90 + v.latitude.values) * np.pi/180
-    v.longitude.values = (180 + v.longitude.values) * np.pi/180
-    u = u.sortby('longitude')
-    v = v.sortby('longitude')
-    u = u.sortby('latitude')
-    v = v.sortby('latitude')
+    U.latitude.values = (90 + U.latitude.values) * np.pi / 180
+    U.longitude.values = (180 + U.longitude.values) * np.pi / 180
+    V.latitude.values = (90 + V.latitude.values) * np.pi / 180
+    V.longitude.values = (180 + V.longitude.values) * np.pi / 180
+    U = U.sortby('longitude')
+    V = V.sortby('longitude')
+    U = U.sortby('latitude')
+    V = V.sortby('latitude')
 
     from scipy.interpolate import RectSphereBivariateSpline
     earth_r = 6371000
     conversion_y = 1 / earth_r  # converting m/s to rad/s
-    conversion_x = 1/(earth_r * xr.apply_ufunc(lambda x: np.abs(np.cos(x - 0.5*np.pi)), u.latitude))
-    conversion_x, _ = xr.broadcast(conversion_x, u.isel({propdim: 0}))
-    times = u[propdim].values.tolist()
+    conversion_x = 1 / (earth_r * xr.apply_ufunc(lambda x: np.abs(np.cos(x - 0.5 * np.pi)), U.latitude))
+    conversion_x, _ = xr.broadcast(conversion_x, U.isel({propdim: 0}))
+    times = U[propdim].values.tolist()
     if timestep < 0:
         times.reverse()  # inplace
 
     # initializing and integrating
 
-    positions_y, positions_x = np.meshgrid(u.latitude.values, u.longitude.values)
+    positions_y, positions_x = np.meshgrid(U.latitude.values, U.longitude.values)
     # positions_y
-
 
     initial_pos = xr.DataArray()
 
@@ -253,46 +252,45 @@ def parcel_propagation(u, v, timestep, propdim="time", verbose=True, subtimes_le
             lat = positions_y[0, :].copy()  # lat is constant along cols
             lon = positions_x[:, 0].copy()  # lon is constant along rows
             # ---- propagating positions ---- #
-            v_data = v.sel({propdim: time}).values
-            interpolator_y = RectSphereBivariateSpline(v.latitude.values, v.longitude.values, v_data,s=900 )
-
+            v_data = V.sel({propdim: time}).values
+            interpolator_y = RectSphereBivariateSpline(V.latitude.values, V.longitude.values, v_data, s=1e5)
 
             positions_y = positions_y + \
                           subtimestep * conversion_y * \
                           interpolator_y.ev(positions_y.ravel(), positions_x.ravel()).reshape(positions_y.shape)
 
-                          #v.sel({propdim: time}).interp(latitude=lat.tolist(), method='linear',
-                          #                              longitude=lon.tolist(),
-                          #                              kwargs={'fill_value': None}).values
+            # v.sel({propdim: time}).interp(latitude=lat.tolist(), method='linear',
+            #                              longitude=lon.tolist(),
+            #                              kwargs={'fill_value': None}).values
             # Hard boundary
             positions_y[np.where(positions_y < 0)] = 0
             positions_y[np.where(positions_y > np.pi)] = np.pi
 
-            u_data = u.sel({propdim: time}).values
-            interpolator_x = RectSphereBivariateSpline(u.latitude.values, u.longitude.values, u_data)
+            u_data = U.sel({propdim: time}).values
+            interpolator_x = RectSphereBivariateSpline(U.latitude.values, U.longitude.values, u_data)
             positions_x = positions_x + \
                           subtimestep * conversion_x.values.T * \
                           interpolator_x.ev(positions_y.ravel(), positions_x.ravel()).reshape(positions_x.shape)
 
-                          # u.sel({propdim: time}).interp(latitude=lat.tolist(), method='linear',
-                          #                              longitude=lon.tolist(),
-                          #                              kwargs={'fill_value': None}).values
+            # u.sel({propdim: time}).interp(latitude=lat.tolist(), method='linear',
+            #                              longitude=lon.tolist(),
+            #                              kwargs={'fill_value': None}).values
 
             # Hard boundary
             positions_x[np.where(positions_x < 0)] = 0
             positions_x[np.where(positions_x > 2 * np.pi)] = 2 * np.pi
 
-    u.latitude.values = u.latitude.values*180/np.pi - 90
-    u.longitude.values = u.longitude.values*180/np.pi - 180
-    v.latitude.values = v.latitude.values*180/np.pi - 90
-    v.longitude.values = v.longitude.values*180/np.pi - 180
-    positions_y = positions_y * 180/np.pi - 90
-    positions_x = positions_x * 180/np.pi - 180
+    U.latitude.values = U.latitude.values * 180 / np.pi - 90
+    U.longitude.values = U.longitude.values * 180 / np.pi - 180
+    V.latitude.values = V.latitude.values * 180 / np.pi - 90
+    V.longitude.values = V.longitude.values * 180 / np.pi - 180
+    positions_y = positions_y * 180 / np.pi - 90
+    positions_x = positions_x * 180 / np.pi - 180
 
     positions_x = xr.DataArray(positions_x.T, dims=['latitude', 'longitude'],
-                               coords=[u.latitude.values.copy(), u.longitude.values.copy()])
+                               coords=[U.latitude.values.copy(), U.longitude.values.copy()])
     positions_y = xr.DataArray(positions_y.T, dims=['latitude', 'longitude'],
-                               coords=[v.latitude.values.copy(), u.longitude.values.copy()])
+                               coords=[V.latitude.values.copy(), U.longitude.values.copy()])
 
     return positions_x, positions_y
 
@@ -322,7 +320,8 @@ def compute_eigenvalues(arrays_list):
         d_matrix = def_tensor.reshape([2, 2])
         cauchy_green = np.matmul(d_matrix.T, d_matrix)
         eigenvalues = max(np.linalg.eig(cauchy_green.reshape([2, 2]))[0])
-        eigenvalues = np.repeat(eigenvalues, 4).reshape([4])  # repeating the same value 4 times just to fill the xr.DataArray in a dummy dimension
+        eigenvalues = np.repeat(eigenvalues, 4).reshape(
+            [4])  # repeating the same value 4 times just to fill the xr.DataArray in a dummy dimension
         out_list.append(eigenvalues)
     out = np.stack(out_list, axis=1)
     return out
@@ -337,7 +336,7 @@ def create_arrays_list(ds, groupdim='points'):
     return input_arrays
 
 
-if __name__ == '__main__':
+def main():
     import matplotlib.pyplot as plt
     import pandas as pd
 
@@ -362,8 +361,10 @@ if __name__ == '__main__':
     time = pd.date_range("2000-01-01T00:00:00", periods=ntime, freq="6H")
     time_idx = np.array([x for x in range(len(time))])
     frq = 0.25
-    u_data = 20 * np.ones([nlat, nlon, len(time)]) * (np.sin(ky*np.pi*latitude/180)**2).reshape([nlat,1,1]) * np.cos(time_idx * frq).reshape([1,1,len(time)])
-    v_data = 40 * np.ones([nlat, nlon, len(time)]) * (np.sin(kx*np.pi*longitude/360)**2).reshape([1,nlon,1]) * np.cos(time_idx * frq).reshape([1,1,len(time)])
+    u_data = 20 * np.ones([nlat, nlon, len(time)]) * (np.sin(ky * np.pi * latitude / 180) ** 2).reshape(
+        [nlat, 1, 1]) * np.cos(time_idx * frq).reshape([1, 1, len(time)])
+    v_data = 40 * np.ones([nlat, nlon, len(time)]) * (np.sin(kx * np.pi * longitude / 360) ** 2).reshape(
+        [1, nlon, 1]) * np.cos(time_idx * frq).reshape([1, 1, len(time)])
 
     u = xr.DataArray(u_data, dims=['latitude', 'longitude', 'time'],
                      coords={'latitude': latitude.copy(), 'longitude': longitude.copy(), 'time': time.copy()})
@@ -375,12 +376,12 @@ if __name__ == '__main__':
     v.name = 'v'
     ds = xr.merge([u, v])
     ftle = lcs(ds)
-    dep_x, dep_y = parcel_propagation(u, v, timestep=timestep, subtimes_len=subtimes_len)
-    origin = np.meshgrid(longitude, latitude)[0]
-    origin.shape
-    displacement = dep_x.copy(data=dep_x - origin)
-    plt.streamplot(longitude, latitude, u.isel(time=0).values, v.isel(time=0).values)
-    (displacement / len(time)).plot()
+    dep_x, dep_y = parcel_propagation(u.copy(), v.copy(), timestep=timestep, subtimes_len=subtimes_len)
+    origin = np.meshgrid(longitude, latitude)[1]
+    displacement = dep_x.copy(data=dep_y - origin)
+    mag = (u.isel(time=0).values ** 2 + v.isel(time=0).values ** 2) ** 0.5
+    plt.streamplot(longitude, latitude, u.isel(time=0).values, v.isel(time=0).values, color=mag)
+    (displacement / len(time)).plot(vmax=10, vmin=-10, cmap="RdBu")
     plt.show()
     dep_x.plot(cmap='rainbow', vmin=-80, vmax=-30)
     plt.show()
@@ -402,3 +403,7 @@ if __name__ == '__main__':
 
     plt.show()
     print("s")
+
+
+if __name__ == '__main__':
+    main()
