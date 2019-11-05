@@ -54,8 +54,9 @@ class LCS:
         timedim = self.timedim
         self.verbose = verbose
         if isinstance(ds, xr.Dataset):
-            u = ds.u
-            v = ds.v
+            u = ds.u.copy()
+            v = ds.v.copy()
+
         if isinstance(self.dataarray_template, xr.DataArray):
             template = self.dataarray_template
             u = xr.DataArray(u, coords=template.coords, dims=template.dims)
@@ -202,7 +203,6 @@ class LCS:
 
 
 def parcel_propagation(u, v, timestep, propdim="time", verbose=True, subtimes_len=10):
-    import scipy.interpolate as interp
     """
     Method to propagate the parcel given u and v
 
@@ -213,9 +213,19 @@ def parcel_propagation(u, v, timestep, propdim="time", verbose=True, subtimes_le
     :return: tuple of xr.DataArrays containing the final positions of the trajectories
     """
     verboseprint = print if verbose else lambda *a, **k: None
+
+
+    u.latitude.values = (90 + u.latitude.values) * np.pi/180
+    u.longitude.values = (180 + u.longitude.values) * np.pi/180
+    v.latitude.values = (90 + v.latitude.values) * np.pi/180
+    v.longitude.values = (180 + v.longitude.values) * np.pi/180
+    u = u.sortby('longitude')
+    v = v.sortby('longitude')
+
+    from scipy.interpolate import RectSphereBivariateSpline
     earth_r = 6371000
-    conversion_y = 180 / (np.pi * earth_r)  # converting m/s to rad/s
-    conversion_x = 180 * ((earth_r * np.pi) ** (-1)) * xr.apply_ufunc(lambda x: np.cos(x * np.pi / 180), u.latitude) ** (-1)
+    conversion_y = 1 / earth_r  # converting m/s to rad/s
+    conversion_x = 1/(earth_r * xr.apply_ufunc(lambda x: np.abs(np.cos(x - 0.5*np.pi)), u.latitude))
     conversion_x, _ = xr.broadcast(conversion_x, u.isel({propdim: 0}))
     times = u[propdim].values.tolist()
     if timestep < 0:
@@ -223,7 +233,9 @@ def parcel_propagation(u, v, timestep, propdim="time", verbose=True, subtimes_le
 
     # initializing and integrating
 
-    positions_x, positions_y = np.meshgrid(u.longitude.values, u.latitude.values)
+    positions_y, positions_x = np.meshgrid(u.latitude.values, u.longitude.values)
+    # positions_y
+
 
     initial_pos = xr.DataArray()
 
@@ -236,27 +248,49 @@ def parcel_propagation(u, v, timestep, propdim="time", verbose=True, subtimes_le
 
             subtimestep = timestep / subtimes_len
 
-            lat = positions_y[:, 0]  # lat is constant along cols
-            lon = positions_x[0, :]  # lon is constant along rows
-
+            lat = positions_y[0, :].copy()  # lat is constant along cols
+            lon = positions_x[:, 0].copy()  # lon is constant along rows
             # ---- propagating positions ---- #
+            v_data = v.sel({propdim: time}).values
+            interpolator_y = RectSphereBivariateSpline(v.latitude.values, v.longitude.values, v_data,s=900 )
+
 
             positions_y = positions_y + \
                           subtimestep * conversion_y * \
-                          v.sel({propdim: time}).interp(latitude=lat.tolist(), method='linear',
-                                                        longitude=lon.tolist(),
-                                                        kwargs={'fill_value': None}).values
+                          interpolator_y.ev(positions_y.ravel(), positions_x.ravel()).reshape(positions_y.shape)
 
+                          #v.sel({propdim: time}).interp(latitude=lat.tolist(), method='linear',
+                          #                              longitude=lon.tolist(),
+                          #                              kwargs={'fill_value': None}).values
+            # Hard boundary
+            positions_y[np.where(positions_y < 0)] = 0
+            positions_y[np.where(positions_y > np.pi)] = np.pi
+
+            u_data = u.sel({propdim: time}).values
+            interpolator_x = RectSphereBivariateSpline(u.latitude.values, u.longitude.values, u_data)
             positions_x = positions_x + \
-                          subtimestep * conversion_x.values * \
-                          u.sel({propdim: time}).interp(latitude=lat.tolist(), method='linear',
-                                                        longitude=lon.tolist(),
-                                                        kwargs={'fill_value': None}).values
+                          subtimestep * conversion_x.values.T * \
+                          interpolator_x.ev(positions_y.ravel(), positions_x.ravel()).reshape(positions_x.shape)
 
-    positions_x = xr.DataArray(positions_x, dims=['latitude', 'longitude'],
-                               coords=[u.latitude.values, u.longitude.values])
-    positions_y = xr.DataArray(positions_y, dims=['latitude', 'longitude'],
-                               coords=[u.latitude.values, u.longitude.values])
+                          # u.sel({propdim: time}).interp(latitude=lat.tolist(), method='linear',
+                          #                              longitude=lon.tolist(),
+                          #                              kwargs={'fill_value': None}).values
+
+            # Hard boundary
+            positions_x[np.where(positions_x < 0)] = 0
+            positions_x[np.where(positions_x > 2 * np.pi)] = 2 * np.pi
+
+    u.latitude.values = u.latitude.values*180/np.pi - 90
+    u.longitude.values = u.longitude.values*180/np.pi - 180
+    v.latitude.values = v.latitude.values*180/np.pi - 90
+    v.longitude.values = v.longitude.values*180/np.pi - 180
+    positions_y = positions_y * 180/np.pi - 90
+    positions_x = positions_x * 180/np.pi - 180
+
+    positions_x = xr.DataArray(positions_x.T, dims=['latitude', 'longitude'],
+                               coords=[u.latitude.values.copy(), u.longitude.values.copy()])
+    positions_y = xr.DataArray(positions_y.T, dims=['latitude', 'longitude'],
+                               coords=[v.latitude.values.copy(), u.longitude.values.copy()])
 
     return positions_x, positions_y
 
@@ -311,7 +345,7 @@ if __name__ == '__main__':
     lon2 = -30
     dx = 0.5
     earth_r = 6371000
-    subtimes_len = 2
+    subtimes_len = 1
     timestep = 6 * 3600
     ntime = 4
     ky = 10
@@ -330,9 +364,9 @@ if __name__ == '__main__':
     v_data = 40 * np.ones([nlat, nlon, len(time)]) * (np.sin(kx*np.pi*longitude/360)**2).reshape([1,nlon,1]) * np.cos(time_idx * frq).reshape([1,1,len(time)])
 
     u = xr.DataArray(u_data, dims=['latitude', 'longitude', 'time'],
-                     coords={'latitude': latitude, 'longitude': longitude, 'time': time})
+                     coords={'latitude': latitude.copy(), 'longitude': longitude.copy(), 'time': time.copy()})
     v = xr.DataArray(v_data, dims=['latitude', 'longitude', 'time'],
-                     coords={'latitude': latitude, 'longitude': longitude, 'time': time})
+                     coords={'latitude': latitude.copy(), 'longitude': longitude.copy(), 'time': time.copy()})
     lcs = LCS(lcs_type='repelling', timestep=timestep, timedim='time', subtimes_len=subtimes_len)
 
     u.name = 'u'
@@ -346,9 +380,9 @@ if __name__ == '__main__':
     plt.streamplot(longitude, latitude, u.isel(time=0).values, v.isel(time=0).values)
     (displacement / len(time)).plot()
     plt.show()
-    dep_x.plot(vmax=-30, vmin=-80,cmap='rainbow')
+    dep_x.plot(cmap='rainbow', vmin=-80, vmax=-30)
     plt.show()
-    dep_y.plot(vmax=-6, vmin=-60,cmap='rainbow')
+    dep_y.plot(cmap='rainbow', vmax=20, vmin=-80)
     plt.streamplot(longitude, latitude, u.isel(time=0).values, v.isel(time=0).values)
     plt.show()
 
@@ -361,6 +395,8 @@ if __name__ == '__main__':
     ftle = ftle.where(dep_y <= dep_x.latitude.max())
     ftle = ftle.where(dep_y >= dep_x.latitude.min())
 
-    ftle.isel(time=0).plot()
+    ftle.isel(time=0).plot(vmax=50)
+    plt.streamplot(longitude, latitude, u.isel(time=0).values, v.isel(time=0).values)
+
     plt.show()
     print("s")
