@@ -221,6 +221,8 @@ def parcel_propagation(u, v, timestep, propdim="time", verbose=True, subtimes_le
     v.longitude.values = (180 + v.longitude.values) * np.pi/180
     u = u.sortby('longitude')
     v = v.sortby('longitude')
+    u = u.sortby('latitude')
+    v = v.sortby('latitude')
 
     from scipy.interpolate import RectSphereBivariateSpline
     earth_r = 6371000
