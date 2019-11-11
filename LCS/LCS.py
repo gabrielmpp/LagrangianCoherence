@@ -1,9 +1,5 @@
 import xarray as xr
 import numpy as np
-import scipy.ndimage.filters as filters
-import scipy.ndimage as ndimage
-from typing import Tuple
-from sklearn.preprocessing import MinMaxScaler
 from numba import jit
 import numba
 
@@ -149,61 +145,8 @@ class LCS:
         # dashboard.show()
         return def_tensor
 
-    def _compute_deformation_tensor_old(self, u: xr.DataArray, v: xr.DataArray, timestep: float) -> xr.DataArray:
-        """
-        :param u: xr.DataArray of the zonal wind field
-        :param v: xr.DataArray of the meridional wind field
-        :param timestep: float
-        :return: xr.DataArray of the deformation tensor
-        """
 
-        u, v, eigengrid = interpolate_c_stagger(u, v)
-
-        # ------- Computing dy_futur/dx -------- #
-        # When derivating with respect to x we use u coords in the Arakawa C grid
-        y_futur = u.y + v.interp(latitude=u.latitude, longitude=u.longitude,
-                                 kwargs={'fill_value': None}) * timestep  # fill_value=None extrapolates
-        dx = u.x.diff('longitude')
-        dydx = y_futur.diff('longitude') / dx
-        dydx['longitude'] = eigengrid.longitude
-
-        # ------- Computing dx_futur/dx -------- #
-        x_futur = u.x + u * timestep
-        dx = u.x.diff('longitude')
-        dxdx = x_futur.diff('longitude') / dx
-        dxdx['longitude'] = eigengrid.longitude
-
-        # ------- Computing dx_futur/dy -------- #
-        # When derivating with respect to y we use v coords in the Arakawa C grid
-        x_futur = v.x + u.interp(latitude=v.latitude, longitude=v.longitude,
-                                 kwargs={'fill_value': None}) * timestep  # fill_value=None extrapolates
-        dy = v.y.diff('latitude')
-        dxdy = x_futur.diff('latitude') / dy
-        dxdy['latitude'] = eigengrid.latitude
-
-        # ------- Computing dy_futur/dy -------- #
-        y_futur = v.y + v * timestep
-        dy = v.y.diff('latitude')
-        dydy = y_futur.diff('latitude') / dy
-        dydy['latitude'] = eigengrid.latitude
-
-        dxdx = dxdx.transpose('latitude', 'longitude').drop('x').drop('y')
-        dxdy = dxdy.transpose('latitude', 'longitude').drop('x') * 0
-        dydy = dydy.transpose('latitude', 'longitude').drop('x').drop('y')
-        dydx = dydx.transpose('latitude', 'longitude').drop('y') * 0
-        dxdx.name = 'dxdx'
-        dxdy.name = 'dxdy'
-        dydy.name = 'dydy'
-        dydx.name = 'dydx'
-
-        def_tensor = xr.merge([dxdx, dxdy, dydx, dydy])
-        def_tensor = def_tensor.to_array()
-        def_tensor = def_tensor.rename({'variable': 'derivatives'})
-        def_tensor = def_tensor.transpose('derivatives', 'latitude', 'longitude')
-        return def_tensor
-
-
-def parcel_propagation(U, V, timestep, propdim="time", verbose=True, subtimes_len=10):
+def parcel_propagation(U, V, timestep, propdim="time", verbose=True, subtimes_len=10, s=1e5):
     """
     Method to propagate the parcel given u and v
 
@@ -211,6 +154,7 @@ def parcel_propagation(U, V, timestep, propdim="time", verbose=True, subtimes_le
     :param timestep: double, timestep in seconds
     :param U: xr.DataArray zonal wind
     :param V: xr.DataArray meridional wind
+    :param s: smoothing factor for the spline spherical interpolation - safe values range from 1e4 to 1e5
     :return: tuple of xr.DataArrays containing the final positions of the trajectories
     """
     verboseprint = print if verbose else lambda *a, **k: None
@@ -253,7 +197,7 @@ def parcel_propagation(U, V, timestep, propdim="time", verbose=True, subtimes_le
             lon = positions_x[:, 0].copy()  # lon is constant along rows
             # ---- propagating positions ---- #
             v_data = V.sel({propdim: time}).values
-            interpolator_y = RectSphereBivariateSpline(V.latitude.values, V.longitude.values, v_data, s=1e5)
+            interpolator_y = RectSphereBivariateSpline(V.latitude.values, V.longitude.values, v_data, s=s)
 
             positions_y = positions_y + \
                           subtimestep * conversion_y * \
@@ -295,23 +239,6 @@ def parcel_propagation(U, V, timestep, propdim="time", verbose=True, subtimes_le
     return positions_x, positions_y
 
 
-def find_maxima(eigenarray: xr.DataArray):
-    data = eigenarray.values
-    neighborhood_size = 4
-    threshold = 0.08
-
-    data_max = filters.maximum_filter(data, neighborhood_size)
-    maxima = (data == data_max)
-    data_min = filters.minimum_filter(data, neighborhood_size)
-    diff = ((data_max - data_min) > threshold)
-    maxima[diff == 0] = 0
-    labeled, num_objects = ndimage.label(diff)
-    diff_array = xr.DataArray(diff, coords=eigenarray.coords, dims=eigenarray.dims)
-    out_array = xr.DataArray(data_max, coords=eigenarray.coords, dims=eigenarray.dims)
-    labeled_array = xr.DataArray(labeled, coords=eigenarray.coords, dims=eigenarray.dims)
-    return out_array, diff_array, labeled_array
-
-
 @jit(parallel=True)
 def compute_eigenvalues(arrays_list):
     out_list = []
@@ -336,7 +263,7 @@ def create_arrays_list(ds, groupdim='points'):
     return input_arrays
 
 
-def main():
+def run_example():
     import matplotlib.pyplot as plt
     import pandas as pd
 
@@ -406,4 +333,4 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    run_example()
