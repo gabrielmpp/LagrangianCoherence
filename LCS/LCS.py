@@ -1,8 +1,22 @@
+"""
+Module LCS
+================
+
+This module provides class (LCS) to compute the Finite-time Lyapunov Exponent from atmospheric wind fields (latitude, longitude
+and time).
+
+
+compute_eigenvalues and parcel propagations are separate from the main class as they can be used in other applications.
+"""
+
 import xarray as xr
 import numpy as np
 from numba import jit
 import numba
+from typing import List
 
+# Types of Lagrangian coherence:
+LCS_TYPES: List[str]
 LCS_TYPES = ['attracting', 'repelling']
 
 
@@ -41,6 +55,12 @@ class LCS:
         :param u: xarray datarray containing u-wind component
         :param v: xarray dataarray containing v-wind component
         :return: xarray dataarray of eigenvalue
+
+        >>> subtimes_len = 1
+        >>> timestep = -6*3600 # 6 hours in seconds
+        >>> lcs = LCS(lcs_type='repelling', timestep=timestep, timedim='time', subtimes_len=subtimes_len)
+        >>> ds = sampleData()
+        >>> ftle = lcs(ds, verbose=False)
         """
         global verboseprint
 
@@ -72,7 +92,7 @@ class LCS:
         #     v = to_cartesian(v)
 
         verboseprint("*---- Computing deformation tensor ----*")
-        def_tensor = self._compute_deformation_tensor(u, v, timestep)
+        def_tensor = self._compute_deformation_tensor(u, v, timestep, verbose=verbose)
         def_tensor = def_tensor.stack({'points': ['latitude', 'longitude']})
         def_tensor = def_tensor.dropna(dim='points')
         # eigenvalues = xr.apply_ufunc(lambda x: compute_eigenvalues(x), def_tensor.groupby('points'),
@@ -105,16 +125,18 @@ class LCS:
             [4])  # repeating the same value 4 times just to fill the xr.DataArray in a dummy dimension
         return eigenvalues
 
-    def _compute_deformation_tensor(self, u: xr.DataArray, v: xr.DataArray, timestep: float) -> xr.DataArray:
+    def _compute_deformation_tensor(self, u: xr.DataArray, v: xr.DataArray, timestep: float,
+                                    verbose=False) -> xr.DataArray:
         """
         :param u: xr.DataArray of the zonal wind field
         :param v: xr.DataArray of the meridional wind field
         :param timestep: float
-        :return: xr.DataArray of the deformation tensor
+        :return: the deformation tensor
+        :rtype: xarray.Dataarray
         """
 
         x_departure, y_departure = parcel_propagation(u, v, timestep, propdim=self.timedim,
-                                                      subtimes_len=self.subtimes_len)
+                                                      subtimes_len=self.subtimes_len, verbose=verbose)
         # u, v, eigengrid = interpolate_c_stagger(u, v)
         conversion_dydx = xr.apply_ufunc(lambda x: np.cos(x * np.pi / 180), y_departure.latitude)
         conversion_dxdy = xr.apply_ufunc(lambda x: np.cos(x * np.pi / 180), x_departure.latitude)
@@ -241,6 +263,10 @@ def parcel_propagation(U, V, timestep, propdim="time", verbose=True, subtimes_le
 
 @jit(parallel=True)
 def compute_eigenvalues(arrays_list):
+    """
+
+    :rtype: np.array
+    """
     out_list = []
     for i in numba.prange(len(arrays_list)):
         def_tensor = arrays_list[i]
@@ -263,23 +289,32 @@ def create_arrays_list(ds, groupdim='points'):
     return input_arrays
 
 
-def run_example():
-    import matplotlib.pyplot as plt
-    import pandas as pd
+def sampleData() -> xr.Dataset:
+    """
+    Function to create sample xr.Dataarray
+    :return: xr.Dataarray
 
+    >>> sampleData()
+    <xarray.Dataset>
+    Dimensions:    (latitude: 200, longitude: 100, time: 4)
+    Coordinates:
+      * latitude   (latitude) float64 -80.0 -79.5 -78.99 -78.49 ... 18.99 19.5 20.0
+      * longitude  (longitude) float64 -80.0 -79.49 -78.99 ... -31.01 -30.51 -30.0
+      * time       (time) datetime64[ns] 2000-01-01 ... 2000-01-01T18:00:00
+    Data variables:
+        u          (latitude, longitude, time) float64 19.4 18.79 ... 2.053 1.712
+        v          (latitude, longitude, time) float64 4.679 4.534 ... 26.33 21.95
+
+    """
+    import pandas as pd
+    ntime = 4
+    ky = 10
+    kx = 40
     lat1 = -80
     lat2 = 20
     lon1 = -80
     lon2 = -30
     dx = 0.5
-    earth_r = 6371000
-    subtimes_len = 1
-    timestep = 6 * 3600
-    ntime = 4
-    ky = 10
-    kx = 40
-    time_dir = 'backward'
-    timestep = -timestep if time_dir == 'backward' else timestep
 
     nlat = int((lat2 - lat1) / dx)
     nlon = int((lon2 - lon1) / dx)
@@ -287,6 +322,7 @@ def run_example():
     longitude = np.linspace(lon1, lon2, nlon)
     time = pd.date_range("2000-01-01T00:00:00", periods=ntime, freq="6H")
     time_idx = np.array([x for x in range(len(time))])
+
     frq = 0.25
     u_data = 20 * np.ones([nlat, nlon, len(time)]) * (np.sin(ky * np.pi * latitude / 180) ** 2).reshape(
         [nlat, 1, 1]) * np.cos(time_idx * frq).reshape([1, 1, len(time)])
@@ -297,11 +333,16 @@ def run_example():
                      coords={'latitude': latitude.copy(), 'longitude': longitude.copy(), 'time': time.copy()})
     v = xr.DataArray(v_data, dims=['latitude', 'longitude', 'time'],
                      coords={'latitude': latitude.copy(), 'longitude': longitude.copy(), 'time': time.copy()})
-    lcs = LCS(lcs_type='repelling', timestep=timestep, timedim='time', subtimes_len=subtimes_len)
-
     u.name = 'u'
     v.name = 'v'
     ds = xr.merge([u, v])
+    return ds
+
+
+def run_example():
+    import matplotlib.pyplot as plt
+    import pandas as pd
+
     ftle = lcs(ds)
     dep_x, dep_y = parcel_propagation(u.copy(), v.copy(), timestep=timestep, subtimes_len=subtimes_len)
     origin = np.meshgrid(longitude, latitude)[1]
