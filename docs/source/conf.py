@@ -15,5 +15,5 @@ templates_path = ['_templates']
 source_suffix = '.rst'
 master_doc = 'index'
 pygments_style = 'sphinx'
-html_theme = 'alabaster'
+html_theme = 'sphinx_rtd_theme'
 html_static_path = ['_static']
