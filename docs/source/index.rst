@@ -1,10 +1,12 @@
 
 LagrangianCoherence: Finding coherent behavior in atmospheric flow
 ===============================================
-This library provides tools for computing the Finite-Time Lyapunov Exponent in atmopsheric data using xarray.
+This library provides tools for computing parcel trajectories and applying Lagrangian diagnostics to identify coherent behavior in the atmospheric flow. The library is built using xarray, numpy and numba computational capabilities.
+
+ the Finite-Time Lyapunov Exponent in atmopsheric data using xarray.
 
 .. toctree::
-     :maxdepth: 2
+     :maxdepth: 4
      :caption: Contents:
 
 .. automodule:: LCS

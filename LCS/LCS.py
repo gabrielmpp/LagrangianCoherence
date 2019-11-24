@@ -26,16 +26,22 @@ class LCS:
     """
     earth_r = 6371000
 
-    def __init__(self, lcs_type: str, timestep: float = 1, dataarray_template=None, timedim='time',
+    def __init__(self, lcs_type: str, timestep: float = 1, timedim='time',
                  shearless=False, subtimes_len=1):
         """
 
-        :param lcs_type:
-        :param timestep:
+        :param lcs_type: str,
+            Type of coherent structure: 'attracting' or 'repelling'.
+        :param timestep: float,
+            Timestep length in seconds.
         :param dataarray_template:
-        :param timedim:
-        :param shearless:
+
+        :param timedim: str,
+            Name of the time dimension, default is 'time'.
+        :param shearless: bool,
+            Whether to ignore the shear deformation, default is False.
         :param subtimes_len:
+            Sub-intervals to divide the time integration, default is 1.
         """
         self.subtimes_len = subtimes_len
         assert isinstance(lcs_type, str), "Parameter lcs_type expected to be str"
@@ -45,16 +51,21 @@ class LCS:
         self.timedim = timedim
         self.shearless = shearless
 
-        self.dataarray_template = dataarray_template
-
     def __call__(self, ds: xr.Dataset = None, u: xr.DataArray = None, v: xr.DataArray = None,
                  verbose=True) -> xr.DataArray:
 
         """
-        :param ds: xarray dataset containing u and v as variables
-        :param u: xarray datarray containing u-wind component
-        :param v: xarray dataarray containing v-wind component
-        :return: xarray dataarray of eigenvalue
+
+        :param ds: xarray.Dataset, optional
+            xarray dataset containing u and v as variables. Mutually exclusive with u and v.
+        :param u: xarray.Dataarray, optional
+            xarray datarray containing u-wind component. Mutually exclusive with ds.
+        :param v: xarray.Dataarray, optional
+            xarray datarray containing u-wind component. Mutually exclusive with ds.
+        :param verbose: bool, optional
+            Whether to print intermediate values
+
+        :return: xarray.Dataarray with the Finite-Time Lyapunov vector
 
         >>> subtimes_len = 1
         >>> timestep = -6*3600 # 6 hours in seconds
@@ -72,11 +83,6 @@ class LCS:
         if isinstance(ds, xr.Dataset):
             u = ds.u.copy()
             v = ds.v.copy()
-
-        if isinstance(self.dataarray_template, xr.DataArray):
-            template = self.dataarray_template
-            u = xr.DataArray(u, coords=template.coords, dims=template.dims)
-            v = xr.DataArray(v, coords=template.coords, dims=template.dims)
 
         u_dims = u.dims
         v_dims = v.dims
@@ -172,12 +178,18 @@ def parcel_propagation(U, V, timestep, propdim="time", verbose=True, subtimes_le
     """
     Method to propagate the parcel given u and v
 
-    :param propdim: str, dimension name for time
-    :param timestep: double, timestep in seconds
-    :param U: xr.DataArray zonal wind
-    :param V: xr.DataArray meridional wind
-    :param s: smoothing factor for the spline spherical interpolation - safe values range from 1e4 to 1e5
-    :return: tuple of xr.DataArrays containing the final positions of the trajectories
+    :param propdim: str,
+        dimension name for time, default is 'time'
+    :param timestep: float,
+        size of time interval in seconds
+    :param U: xarray.DataArray,
+        Array corresponding the zonal wind
+    :param V: xarray.Dataarray,
+        Array correponding to the meridional wind
+    :param s: float,
+        smoothing factor for the spline spherical interpolation, default is 1e5
+    :return: tuple,
+        zonal and meridional arrays corresponding to the final positions of the trajectories
     """
     verboseprint = print if verbose else lambda *a, **k: None
 
