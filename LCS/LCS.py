@@ -4,9 +4,6 @@ Module LCS
 
 This module provides class (LCS) to compute the Finite-time Lyapunov Exponent from atmospheric wind fields (latitude, longitude
 and time).
-
-
-compute_eigenvalues and parcel propagations are separate from the main class as they can be used in other applications.
 """
 
 import xarray as xr
@@ -22,7 +19,7 @@ LCS_TYPES = ['attracting', 'repelling']
 
 class LCS:
     """
-    Methods to compute LCS in 2D wind fields in xarrray dataarrays
+    API to compute the Finite-time Lyapunov exponent in 2D wind fields
     """
     earth_r = 6371000
 
@@ -57,11 +54,11 @@ class LCS:
         """
 
         :param ds: xarray.Dataset, optional
-            xarray dataset containing u and v as variables. Mutually exclusive with u and v.
+            xarray dataset containing u and v as variables. Mutually exclusive with parameters u and v.
         :param u: xarray.Dataarray, optional
-            xarray datarray containing u-wind component. Mutually exclusive with ds.
+            xarray datarray containing u-wind component. Mutually exclusive with parameter ds.
         :param v: xarray.Dataarray, optional
-            xarray datarray containing u-wind component. Mutually exclusive with ds.
+            xarray datarray containing u-wind component. Mutually exclusive with parameter ds.
         :param verbose: bool, optional
             Whether to print intermediate values
 
@@ -98,7 +95,7 @@ class LCS:
         #     v = to_cartesian(v)
 
         verboseprint("*---- Computing deformation tensor ----*")
-        def_tensor = self._compute_deformation_tensor(u, v, timestep, verbose=verbose)
+        def_tensor = compute_deformation_tensor(u, v, timestep, verbose=verbose)
         def_tensor = def_tensor.stack({'points': ['latitude', 'longitude']})
         def_tensor = def_tensor.dropna(dim='points')
         # eigenvalues = xr.apply_ufunc(lambda x: compute_eigenvalues(x), def_tensor.groupby('points'),
@@ -116,62 +113,46 @@ class LCS:
 
         return eigenvalues
 
-    def _compute_eigenvalues(self, def_tensor: np.array) -> np.array:
-        d_matrix = def_tensor.reshape([2, 2])
-        cauchy_green = np.matmul(d_matrix.T, d_matrix)
 
-        if self.lcs_type == 'repelling':
-            eigenvalues = max(np.linalg.eig(cauchy_green.reshape([2, 2]))[0])
-        elif self.lcs_type == 'attracting':
-            eigenvalues = min(np.linalg.eig(cauchy_green.reshape([2, 2]))[0])
-        else:
-            raise ValueError("lcs_type {lcs_type} not supported".format(lcs_type=self.lcs_type))
+def compute_deformation_tensor(u: xr.DataArray, v: xr.DataArray, timestep: float,
+                               verbose=False) -> xr.DataArray:
+    """
+    :param u: xr.DataArray, array corresponding to the zonal wind field
+    :param v: xr.DataArray, array corresponding to the meridional wind field
+    :param timestep: float
+    :return: the deformation tensor
+    :rtype: xarray.Dataarray
+    """
 
-        eigenvalues = np.repeat(eigenvalues, 4).reshape(
-            [4])  # repeating the same value 4 times just to fill the xr.DataArray in a dummy dimension
-        return eigenvalues
+    x_departure, y_departure = parcel_propagation(u, v, timestep, propdim=self.timedim,
+                                                  subtimes_len=self.subtimes_len, verbose=verbose)
+    # u, v, eigengrid = interpolate_c_stagger(u, v)
+    conversion_dydx = xr.apply_ufunc(lambda x: np.cos(x * np.pi / 180), y_departure.latitude)
+    conversion_dxdy = xr.apply_ufunc(lambda x: np.cos(x * np.pi / 180), x_departure.latitude)
 
-    def _compute_deformation_tensor(self, u: xr.DataArray, v: xr.DataArray, timestep: float,
-                                    verbose=False) -> xr.DataArray:
-        """
-        :param u: xr.DataArray of the zonal wind field
-        :param v: xr.DataArray of the meridional wind field
-        :param timestep: float
-        :return: the deformation tensor
-        :rtype: xarray.Dataarray
-        """
+    dxdx = x_departure.diff('longitude') / x_departure.longitude.diff('longitude')
+    dxdy = conversion_dxdy * x_departure.diff('latitude') / x_departure.latitude.diff('latitude')
+    dydy = y_departure.diff('latitude') / y_departure.latitude.diff('latitude')
+    dydx = y_departure.diff('longitude') / (y_departure.longitude.diff('longitude') * conversion_dydx)
 
-        x_departure, y_departure = parcel_propagation(u, v, timestep, propdim=self.timedim,
-                                                      subtimes_len=self.subtimes_len, verbose=verbose)
-        # u, v, eigengrid = interpolate_c_stagger(u, v)
-        conversion_dydx = xr.apply_ufunc(lambda x: np.cos(x * np.pi / 180), y_departure.latitude)
-        conversion_dxdy = xr.apply_ufunc(lambda x: np.cos(x * np.pi / 180), x_departure.latitude)
+    dxdx = dxdx.transpose('latitude', 'longitude')
+    dxdy = dxdy.transpose('latitude', 'longitude')
+    dydy = dydy.transpose('latitude', 'longitude')
+    dydx = dydx.transpose('latitude', 'longitude')
 
-        dxdx = x_departure.diff('longitude') / x_departure.longitude.diff('longitude')
-        dxdy = conversion_dxdy * x_departure.diff('latitude') / x_departure.latitude.diff('latitude')
-        dydy = y_departure.diff('latitude') / y_departure.latitude.diff('latitude')
-        dydx = y_departure.diff('longitude') / (y_departure.longitude.diff('longitude') * conversion_dydx)
+    dxdx.name = 'dxdx'
+    dxdy.name = 'dxdy'
+    dydy.name = 'dydy'
+    dydx.name = 'dydx'
 
-        dxdx = dxdx.transpose('latitude', 'longitude')
-        dxdy = dxdy.transpose('latitude', 'longitude')
-        dydy = dydy.transpose('latitude', 'longitude')
-        dydx = dydx.transpose('latitude', 'longitude')
-        if self.shearless:
-            dydx = dydx * 0
-            dxdy = dxdy * 0
-        dxdx.name = 'dxdx'
-        dxdy.name = 'dxdy'
-        dydy.name = 'dydy'
-        dydx.name = 'dydx'
-
-        def_tensor = xr.merge([dxdx, dxdy, dydx, dydy])
-        def_tensor = def_tensor.to_array()
-        def_tensor = def_tensor.rename({'variable': 'derivatives'})
-        def_tensor = def_tensor.transpose('derivatives', 'latitude', 'longitude')
-        # from xrviz.dashboard import Dashboard
-        # dashboard = Dashboard(def_tensor)
-        # dashboard.show()
-        return def_tensor
+    def_tensor = xr.merge([dxdx, dxdy, dydx, dydy])
+    def_tensor = def_tensor.to_array()
+    def_tensor = def_tensor.rename({'variable': 'derivatives'})
+    def_tensor = def_tensor.transpose('derivatives', 'latitude', 'longitude')
+    # from xrviz.dashboard import Dashboard
+    # dashboard = Dashboard(def_tensor)
+    # dashboard.show()
+    return def_tensor
 
 
 def parcel_propagation(U, V, timestep, propdim="time", verbose=True, subtimes_len=10, s=1e5):
