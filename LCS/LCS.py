@@ -176,15 +176,15 @@ def parcel_propagation(U: xr.DataArray, V: xr.DataArray, timestep: int, propdim:
         zonal and meridional arrays corresponding to the final positions of the trajectories
     """
     verboseprint = print if verbose else lambda *a, **k: None
-
-    u_lat_values = (90 + U.latitude.values.copy()) * np.pi / 180
-    u_lon_values = (180 + U.longitude.values.copy()) * np.pi / 180
-    v_lat_values = (90 + V.latitude.values.copy()) * np.pi / 180
-    v_lon_values = (180 + V.longitude.values.copy()) * np.pi / 180
     U = U.sortby('longitude')
     V = V.sortby('longitude')
     U = U.sortby('latitude')
     V = V.sortby('latitude')
+    u_lat_values = (90 + U.latitude.values.copy()) * np.pi / 180
+    u_lon_values = (180 + U.longitude.values.copy()) * np.pi / 180
+    v_lat_values = (90 + V.latitude.values.copy()) * np.pi / 180
+    v_lon_values = (180 + V.longitude.values.copy()) * np.pi / 180
+
 
     from scipy.interpolate import RectSphereBivariateSpline
     earth_r = 6371000
