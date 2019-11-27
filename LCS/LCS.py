@@ -176,15 +176,16 @@ def parcel_propagation(U: xr.DataArray, V: xr.DataArray, timestep: int, propdim:
         zonal and meridional arrays corresponding to the final positions of the trajectories
     """
     verboseprint = print if verbose else lambda *a, **k: None
+
+
+    U.latitude.values = (90 + U.latitude.values) * np.pi / 180
+    U.longitude.values = (180 + U.longitude.values) * np.pi / 180
+    V.latitude.values = (90 + V.latitude.values) * np.pi / 180
+    V.longitude.values = (180 + V.longitude.values) * np.pi / 180
     U = U.sortby('longitude')
     V = V.sortby('longitude')
     U = U.sortby('latitude')
     V = V.sortby('latitude')
-    u_lat_values = (90 + U.latitude.values.copy()) * np.pi / 180
-    u_lon_values = (180 + U.longitude.values.copy()) * np.pi / 180
-    v_lat_values = (90 + V.latitude.values.copy()) * np.pi / 180
-    v_lon_values = (180 + V.longitude.values.copy()) * np.pi / 180
-
 
     from scipy.interpolate import RectSphereBivariateSpline
     earth_r = 6371000
@@ -197,7 +198,7 @@ def parcel_propagation(U: xr.DataArray, V: xr.DataArray, timestep: int, propdim:
 
     # initializing and integrating
 
-    positions_y, positions_x = np.meshgrid(u_lat_values.copy(), u_lon_values.copy())
+    positions_y, positions_x = np.meshgrid(U.latitude.values, U.longitude.values)
     # positions_y
 
     initial_pos = xr.DataArray()
@@ -216,7 +217,7 @@ def parcel_propagation(U: xr.DataArray, V: xr.DataArray, timestep: int, propdim:
             lon = positions_x[:, 0].copy()  # lon is constant along rows
             # ---- propagating positions ---- #
             v_data = V.sel({propdim: time}).values
-            interpolator_y = RectSphereBivariateSpline(v_lat_values, v_lon_values, v_data, s=s)
+            interpolator_y = RectSphereBivariateSpline(V.latitude.values, V.longitude.values, v_data, s=s)
 
             positions_y = positions_y + \
                           subtimestep * conversion_y * \
@@ -227,7 +228,7 @@ def parcel_propagation(U: xr.DataArray, V: xr.DataArray, timestep: int, propdim:
             positions_y[np.where(positions_y > np.pi)] = np.pi
 
             u_data = U.sel({propdim: time}).values
-            interpolator_x = RectSphereBivariateSpline(u_lat_values, u_lon_values, u_data)
+            interpolator_x = RectSphereBivariateSpline(U.latitude.values, U.longitude.values, u_data)
             positions_x = positions_x + \
                           subtimestep * conversion_x.values.T * \
                           interpolator_x.ev(positions_y.ravel(), positions_x.ravel()).reshape(positions_x.shape)
@@ -237,6 +238,12 @@ def parcel_propagation(U: xr.DataArray, V: xr.DataArray, timestep: int, propdim:
             positions_x[np.where(positions_x > 2 * np.pi)] = 2 * np.pi
         pos_list_x.append(positions_x)
         pos_list_y.append(positions_y)
+
+
+    U.latitude.values = U.latitude.values * 180 / np.pi - 90
+    U.longitude.values = U.longitude.values * 180 / np.pi - 180
+    V.latitude.values = V.latitude.values * 180 / np.pi - 90
+    V.longitude.values = V.longitude.values * 180 / np.pi - 180
 
     for i in range(len(pos_list_x)):
         pos_list_x[i] = pos_list_x[i] * 180 / np.pi - 180
