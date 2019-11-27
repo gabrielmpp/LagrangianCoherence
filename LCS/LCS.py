@@ -247,7 +247,7 @@ def parcel_propagation(U: xr.DataArray, V: xr.DataArray, timestep: int, propdim:
 
     for i in range(len(pos_list_x)):
         pos_list_x[i] = pos_list_x[i] * 180 / np.pi - 180
-        pos_list_y[i] = pos_list_y[i] * 80 / np.pi - 90
+        pos_list_y[i] = pos_list_y[i] * 180 / np.pi - 90
         pos_list_x[i] = xr.DataArray(pos_list_x[i].T, dims=['latitude', 'longitude'],
                                coords=[U.latitude.values.copy(), U.longitude.values.copy()])
         pos_list_y[i] = xr.DataArray(pos_list_y[i].T, dims=['latitude', 'longitude'],
