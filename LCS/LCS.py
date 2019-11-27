@@ -3,7 +3,7 @@ Module LCS
 ================
 
 This module provides class (LCS) to compute the Finite-time Lyapunov Exponent from atmospheric wind fields (latitude, longitude
-and time).
+and time).K
 """
 
 import xarray as xr
@@ -155,10 +155,13 @@ def compute_deformation_tensor(u: xr.DataArray, v: xr.DataArray, timestep: float
     return def_tensor
 
 
-def parcel_propagation(U, V, timestep, propdim="time", verbose=True, subtimes_len=10, s=1e5):
+def parcel_propagation(U: xr.DataArray, V: xr.DataArray, timestep: int, propdim: str = "time",
+                       verbose: bool = True, subtimes_len: int = 10, s: float = 1e5, return_traj: bool = False):
     """
     Method to propagate the parcel given u and v
 
+    :param return_traj: boolean, default is False,
+        True returns the parcel positions for all timesteps in a time dimension
     :param propdim: str,
         dimension name for time, default is 'time'
     :param timestep: float,
@@ -198,7 +201,8 @@ def parcel_propagation(U, V, timestep, propdim="time", verbose=True, subtimes_le
     # positions_y
 
     initial_pos = xr.DataArray()
-
+    pos_list_x = []
+    pos_list_y = []
     for time in times:
         verboseprint(f'Propagating time {time}')
         subtimes = np.arange(0, subtimes_len, 1).tolist()
@@ -218,9 +222,6 @@ def parcel_propagation(U, V, timestep, propdim="time", verbose=True, subtimes_le
                           subtimestep * conversion_y * \
                           interpolator_y.ev(positions_y.ravel(), positions_x.ravel()).reshape(positions_y.shape)
 
-            # v.sel({propdim: time}).interp(latitude=lat.tolist(), method='linear',
-            #                              longitude=lon.tolist(),
-            #                              kwargs={'fill_value': None}).values
             # Hard boundary
             positions_y[np.where(positions_y < 0)] = 0
             positions_y[np.where(positions_y > np.pi)] = np.pi
@@ -231,25 +232,31 @@ def parcel_propagation(U, V, timestep, propdim="time", verbose=True, subtimes_le
                           subtimestep * conversion_x.values.T * \
                           interpolator_x.ev(positions_y.ravel(), positions_x.ravel()).reshape(positions_x.shape)
 
-            # u.sel({propdim: time}).interp(latitude=lat.tolist(), method='linear',
-            #                              longitude=lon.tolist(),
-            #                              kwargs={'fill_value': None}).values
-
             # Hard boundary
             positions_x[np.where(positions_x < 0)] = 0
             positions_x[np.where(positions_x > 2 * np.pi)] = 2 * np.pi
+            pos_list_x.append(positions_x)
+            pos_list_y.append(positions_y)
+
 
     U.latitude.values = U.latitude.values * 180 / np.pi - 90
     U.longitude.values = U.longitude.values * 180 / np.pi - 180
     V.latitude.values = V.latitude.values * 180 / np.pi - 90
     V.longitude.values = V.longitude.values * 180 / np.pi - 180
-    positions_y = positions_y * 180 / np.pi - 90
-    positions_x = positions_x * 180 / np.pi - 180
 
-    positions_x = xr.DataArray(positions_x.T, dims=['latitude', 'longitude'],
+    for i in range(len(pos_list_x)):
+        pos_list_x[i] = pos_list_x[i] * 180 / np.pi - 180
+        pos_list_y[i] = pos_list_y[i] * 80 / np.pi - 90
+        pos_list_x[i] = xr.DataArray(pos_list_x[i].T, dims=['latitude', 'longitude'],
                                coords=[U.latitude.values.copy(), U.longitude.values.copy()])
-    positions_y = xr.DataArray(positions_y.T, dims=['latitude', 'longitude'],
+        pos_list_y[i] = xr.DataArray(pos_list_y[i].T, dims=['latitude', 'longitude'],
                                coords=[V.latitude.values.copy(), U.longitude.values.copy()])
+    if return_traj:
+        positions_x = xr.concat(pos_list_x, dim=U[propdim])
+        positions_y = xr.concat(pos_list_y, dim=U[propdim])
+    else:
+        positions_x = pos_list_x[-1]
+        positions_y = positions_y[-1]
 
     return positions_x, positions_y
 
