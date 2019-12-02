@@ -10,6 +10,7 @@ import xarray as xr
 import numpy as np
 from numba import jit
 import numba
+import pandas as pd
 from typing import List
 
 # Types of Lagrangian coherence:
@@ -204,6 +205,8 @@ def parcel_propagation(U: xr.DataArray, V: xr.DataArray, timestep: int, propdim:
     initial_pos = xr.DataArray()
     pos_list_x = []
     pos_list_y = []
+    pos_list_x.append(positions_x)  # appending t=0
+    pos_list_y.append(positions_y)
     for time in times:
         verboseprint(f'Propagating time {time}')
         subtimes = np.arange(0, subtimes_len, 1).tolist()
@@ -253,8 +256,10 @@ def parcel_propagation(U: xr.DataArray, V: xr.DataArray, timestep: int, propdim:
         pos_list_y[i] = xr.DataArray(pos_list_y[i].T, dims=['latitude', 'longitude'],
                                coords=[U.latitude.values.copy(), U.longitude.values.copy()])
     if return_traj:
-        positions_x = xr.concat(pos_list_x, dim=U[propdim])
-        positions_y = xr.concat(pos_list_y, dim=U[propdim])
+        time_list = [pd.Timestamp(x) for x in U[propdim].values]
+        time_list.append(pd.Timestamp(U[propdim].values[-1] + pd.Timedelta(str(timestep)+'s')))
+        positions_x = xr.concat(pos_list_x, dim=pd.Index(time_list, name=propdim))
+        positions_y = xr.concat(pos_list_y, dim=pd.Index(time_list, name=propdim))
     else:
         positions_x = pos_list_x[-1]
         positions_y = positions_y[-1]
