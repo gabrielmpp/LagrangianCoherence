@@ -257,7 +257,7 @@ def parcel_propagation(U: xr.DataArray, V: xr.DataArray, timestep: int, propdim:
                                coords=[U.latitude.values.copy(), U.longitude.values.copy()])
     if return_traj:
         time_list = [pd.Timestamp(x) for x in U[propdim].values]
-        time_list.append(pd.Timestamp(U[propdim].values[-1] + pd.Timedelta(str(timestep)+'s')))
+        time_list.append(pd.Timestamp(pd.Timestamp(U[propdim].values[-1]) + pd.Timedelta(str(timestep)+'s')))
         positions_x = xr.concat(pos_list_x, dim=pd.Index(time_list, name=propdim))
         positions_y = xr.concat(pos_list_y, dim=pd.Index(time_list, name=propdim))
     else:
