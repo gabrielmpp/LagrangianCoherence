@@ -1,3 +1,5 @@
+pandas
+scipy
 xarray
 numpy
 numba
