@@ -97,7 +97,9 @@ class LCS:
         #     v = to_cartesian(v)
 
         verboseprint("*---- Computing deformation tensor ----*")
-        def_tensor = compute_deformation_tensor(u, v, timestep, verbose=verbose)
+        x_departure, y_departure = parcel_propagation(u, v, timestep, propdim=self.timedim,
+                                                      subtimes_len=self.subtimes_len, verbose=verbose)
+        def_tensor = compute_deformation_tensor(x_departure, y_departure, timestep, verbose=verbose)
         def_tensor = def_tensor.stack({'points': ['latitude', 'longitude']})
         def_tensor = def_tensor.dropna(dim='points')
         # eigenvalues = xr.apply_ufunc(lambda x: compute_eigenvalues(x), def_tensor.groupby('points'),
@@ -116,7 +118,7 @@ class LCS:
         return eigenvalues
 
 
-def compute_deformation_tensor(u: xr.DataArray, v: xr.DataArray, timestep: float,
+def compute_deformation_tensor(x_departure: xr.DataArray, y_departure: xr.DataArray, timestep: float,
                                verbose=False) -> xr.DataArray:
     """
     :param u: xr.DataArray, array corresponding to the zonal wind field
@@ -126,8 +128,7 @@ def compute_deformation_tensor(u: xr.DataArray, v: xr.DataArray, timestep: float
     :rtype: xarray.Dataarray
     """
 
-    x_departure, y_departure = parcel_propagation(u, v, timestep, propdim=self.timedim,
-                                                  subtimes_len=self.subtimes_len, verbose=verbose)
+
     # u, v, eigengrid = interpolate_c_stagger(u, v)
     conversion_dydx = xr.apply_ufunc(lambda x: np.cos(x * np.pi / 180), y_departure.latitude)
     conversion_dxdy = xr.apply_ufunc(lambda x: np.cos(x * np.pi / 180), x_departure.latitude)
