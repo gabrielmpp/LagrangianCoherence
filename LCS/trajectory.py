@@ -114,8 +114,10 @@ def parcel_propagation(U: xr.DataArray,
         positions_x = xr.concat(pos_list_x, dim=pd.Index(time_list, name=propdim))
         positions_y = xr.concat(pos_list_y, dim=pd.Index(time_list, name=propdim))
     else:
-        positions_x = pos_list_x[-1]
-        positions_y = positions_y[-1]
+        positions_x = xr.DataArray(positions_x.T, dims=['latitude', 'longitude'],
+                                   coords=[U.latitude.values.copy(), U.longitude.values.copy()])
+        positions_y = xr.DataArray(positions_y.T, dims=['latitude', 'longitude'],
+                                   coords=[U.latitude.values.copy(), U.longitude.values.copy()])
 
     return positions_x, positions_y
 
