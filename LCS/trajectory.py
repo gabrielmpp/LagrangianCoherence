@@ -2,14 +2,12 @@ import xarray as xr
 import numpy as np
 import pandas as pd
 from scipy.interpolate import RectSphereBivariateSpline, CubicSpline
-from tools import latlonsel
 
 def parcel_propagation(U: xr.DataArray,
                        V: xr.DataArray,
                        timestep: int = 1,
                        propdim: str = "time",
                        verbose: bool = True,
-                       subtimes_len: int = 10,
                        s: float = 1e5,
                        return_traj: bool = False,
                        SETTLS_order=0):
@@ -53,15 +51,17 @@ def parcel_propagation(U: xr.DataArray,
         times.reverse()  # inplace
 
     # initializing and integrating
+    y_min = U.latitude.values.min()
+    y_max = U.latitude.values.max()
+    x_min = U.longitude.values.min()
+    x_max = U.longitude.values.max()
 
     positions_y, positions_x = np.meshgrid(U.latitude.values, U.longitude.values)
     # positions_y
-
-    initial_pos = xr.DataArray()
     pos_list_x = []
     pos_list_y = []
-    pos_list_x.append(positions_x)  # appending t=0
-    pos_list_y.append(positions_y)
+    # pos_list_x.append(positions_x)  # appending t=0
+    # pos_list_y.append(positions_y)
     for time in times:
         verboseprint(f'Propagating time {time}')
         v_data = V.sel({propdim: time}).values
@@ -69,20 +69,18 @@ def parcel_propagation(U: xr.DataArray,
         va = interpolator_y.ev(positions_y.ravel(), positions_x.ravel()).reshape(positions_y.shape)
         positions_y = positions_y + timestep * conversion_y * va
 
-        # Hard boundary
-        positions_y[np.where(positions_y < 0)] = 0
-        positions_y[np.where(positions_y > np.pi)] = np.pi
 
         u_data = U.sel({propdim: time}).values
         interpolator_x = RectSphereBivariateSpline(U.latitude.values, U.longitude.values, u_data)
         ua = interpolator_x.ev(positions_y.ravel(), positions_x.ravel()).reshape(positions_x.shape)
         positions_x = positions_x + timestep * conversion_x.values.T * ua
-
+        # Hard boundary
+        positions_y[np.where(positions_y < y_min)] = y_min
+        positions_y[np.where(positions_y > y_max)] = y_max
 
         # Hard boundary
-        positions_x[np.where(positions_x < 0)] = 0
-        positions_x[np.where(positions_x > 2 * np.pi)] = 2 * np.pi
-
+        positions_x[np.where(positions_x < x_min)] = x_min
+        positions_x[np.where(positions_x > x_max)] = x_max
 
         # SETTLS algorithm for higher accuracy
         k = 0
@@ -108,17 +106,18 @@ def parcel_propagation(U: xr.DataArray,
 
             positions_y = positions_y + 0.5 * timestep * conversion_y * (va + 2*v_t_depts - v_tprevious_depts)
 
-            positions_x = positions_x + 0.5 * timestep *  conversion_x.values.T * (ua + 2*u_t_depts - u_tprevious_depts)
+            positions_x = positions_x + 0.5 * timestep * conversion_x.values.T * (ua + 2*u_t_depts - u_tprevious_depts)
 
             # Hard boundary
-            positions_y[np.where(positions_y < 0)] = 0
-            positions_y[np.where(positions_y > np.pi)] = np.pi
+            positions_y[np.where(positions_y < y_min)] = y_min
+            positions_y[np.where(positions_y > y_max)] = y_max
 
             # Hard boundary
-            positions_x[np.where(positions_x < 0)] = 0
-            positions_x[np.where(positions_x > 2 * np.pi)] = 2 * np.pi
+            positions_x[np.where(positions_x < x_min)] = x_min
+            positions_x[np.where(positions_x > x_max)] = x_max
 
-            k +=1
+            k += 1
+
 
         pos_list_x.append(positions_x)
         pos_list_y.append(positions_y)
@@ -134,13 +133,13 @@ def parcel_propagation(U: xr.DataArray,
                                coords=[U.latitude.values.copy(), U.longitude.values.copy()])
         pos_list_y[i] = xr.DataArray(pos_list_y[i].T, dims=['latitude', 'longitude'],
                                coords=[U.latitude.values.copy(), U.longitude.values.copy()])
-    time_list = [pd.Timestamp(x) for x in U[propdim].values]
-    time_list.append(pd.Timestamp(pd.Timestamp(U[propdim].values[-1]) + pd.Timedelta(str(timestep)+'s')))
-    positions_x = xr.concat(pos_list_x, dim=pd.Index(time_list, name=propdim))
-    positions_y = xr.concat(pos_list_y, dim=pd.Index(time_list, name=propdim))
+    # time_list = U[propdim].values.tolist()
+    # time_list.append(pd.Timestamp(pd.Timestamp(U[propdim].values[-1]) + pd.Timedelta(str(timestep)+'s')))
+    positions_x = xr.concat(pos_list_x, dim=pd.Index(U[propdim].values, name=propdim))
+    positions_y = xr.concat(pos_list_y, dim=pd.Index(U[propdim].values, name=propdim))
     if not return_traj:
-        positions_x = positions_x.isel(time=-1)
-        positions_y = positions_y.isel(time=-1)
+        positions_x = positions_x.isel({propdim: -1})
+        positions_y = positions_y.isel({propdim: -1})
 
     return positions_x, positions_y
 
@@ -280,6 +279,8 @@ def parcel_propagation3D(U: xr.DataArray,
 
 if __name__ == '__main__':
     import matplotlib.pyplot as plt
+    from xr_tools.tools import latlonsel
+
     data_dir = '/media/gab/gab_hd/data/'
     sel_slice = dict(
         lat=slice(-70, 15),
@@ -294,8 +295,8 @@ if __name__ == '__main__':
     V = V.assign_coords(longitude=(V['longitude'].values + 180) % 360 - 180)
     U = latlonsel(U, **sel_slice, latname='latitude', lonname='longitude')
     V = latlonsel(V, **sel_slice, latname='latitude', lonname='longitude')
-    x, y = parcel_propagation(U.sel(level=level), V.sel(level=level), timestep=-6*3600, SETTLS_order=6, return_traj=True)
-    x2, y2 = parcel_propagation(U.sel(level=level), V.sel(level=level), timestep=-6*3600, SETTLS_order=0, return_traj=True)
+    x, y = parcel_propagation(U.sel(level=level), V.sel(level=level), timestep=-6*3600, SETTLS_order=4, return_traj=False)
+    x2, y2 = parcel_propagation(U.sel(level=level), V.sel(level=level), timestep=-6*3600, SETTLS_order=0, return_traj=False)
 
     U = U.sortby('longitude')
     U = U.sortby('latitude')
@@ -303,15 +304,15 @@ if __name__ == '__main__':
     V = V.sortby('latitude')
     import cartopy.crs as ccrs
 
-    for time in x.time.values:
-        fig = plt.figure(figsize=[20, 10])
-        ax = fig.add_subplot(projection=ccrs.PlateCarree())
-        (x2).sel(time=time).plot.contourf(transform=ccrs.PlateCarree(), levels=15, vmin=-140, vmax=20, cmap='nipy_spectral', ax=ax)
-        ax.streamplot(U.longitude.values, U.latitude.values, U.isel(time=0).sel(level=level).values,
-                       V.sel(time=time).sel(level=level).values, color='black')
-        ax.coastlines()
-        plt.show()
-        plt.close()
+    fig, ax = plt.subplots(1, 1, subplot_kw=dict(projection=ccrs.PlateCarree()), figsize=[20, 10])
+    # x.plot.contourf(transform=ccrs.PlateCarree(), levels=15, vmin=-140, vmax=20, cmap='nipy_spectral', ax=ax)
+    p = ax.contourf(U.longitude.values, U.latitude.values, y2.values, levels=15, vmin=-70, vmax=15, cmap='RdBu')
+    ax.streamplot(U.longitude.values, U.latitude.values, U.sel(time=x.time.values, level=level).values,
+                  V.sel(time=x.time.values,level=level).values, color='black')
+    ax.coastlines()
+    plt.colorbar(p, ax=ax)
+    plt.tight_layout()
+    plt.show()
 
     (x-x2).plot(vmax=1e-1, vmin=-1e-1, cmap='RdBu'); plt.show()
     # x, y, z = parcel_propagation3D(U, V, W, timestep=6*3600, return_traj=True)

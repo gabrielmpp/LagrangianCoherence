@@ -12,7 +12,7 @@ from numba import jit
 import numba
 import pandas as pd
 from typing import List
-from LCS.trajectory import parcel_propagation
+from LagrangianCoherence.LCS.trajectory import parcel_propagation
 
 # Types of Lagrangian coherence:
 LCS_TYPES: List[str]
@@ -26,7 +26,7 @@ class LCS:
     earth_r = 6371000
 
     def __init__(self, lcs_type: str, timestep: float = 1, timedim='time',
-                 shearless=False, subtimes_len=1):
+                 shearless=False, SETTLS_order=0):
         """
 
         :param lcs_type: str,
@@ -42,11 +42,11 @@ class LCS:
         :param subtimes_len:
             Sub-intervals to divide the time integration, default is 1.
         """
-        self.subtimes_len = subtimes_len
         assert isinstance(lcs_type, str), "Parameter lcs_type expected to be str"
         assert lcs_type in LCS_TYPES, f"lcs_type {lcs_type} not available"
         self.lcs_type = lcs_type
         self.timestep = timestep
+        self.SETTLS_order = SETTLS_order
         self.timedim = timedim
         self.shearless = shearless
 
@@ -98,7 +98,8 @@ class LCS:
 
         verboseprint("*---- Computing deformation tensor ----*")
         x_departure, y_departure = parcel_propagation(u, v, timestep, propdim=self.timedim,
-                                                      subtimes_len=self.subtimes_len, verbose=verbose)
+                                                      SETTLS_order=self.SETTLS_order,
+                                                      verbose=verbose)
         def_tensor = compute_deformation_tensor(x_departure, y_departure, timestep, verbose=verbose)
         def_tensor = def_tensor.stack({'points': ['latitude', 'longitude']})
         def_tensor = def_tensor.dropna(dim='points')
