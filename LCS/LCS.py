@@ -73,7 +73,7 @@ class LCS:
         >>> ftle = lcs(ds, verbose=False)
         """
         global verboseprint
-
+        print('!' * 100)
         verboseprint = print if verbose else lambda *a, **k: None
 
         timestep = self.timestep
@@ -96,10 +96,12 @@ class LCS:
         #     verboseprint("Ascribing x and y coords do v")
         #     v = to_cartesian(v)
 
-        verboseprint("*---- Computing deformation tensor ----*")
+        verboseprint("*---- Parcel propagation ----*")
         x_departure, y_departure = parcel_propagation(u, v, timestep, propdim=self.timedim,
                                                       SETTLS_order=self.SETTLS_order,
                                                       verbose=verbose)
+        verboseprint("*---- Computing deformation tensor ----*")
+
         def_tensor = compute_deformation_tensor(x_departure, y_departure, timestep, verbose=verbose)
         def_tensor = def_tensor.stack({'points': ['latitude', 'longitude']})
         def_tensor = def_tensor.dropna(dim='points')
@@ -107,9 +109,8 @@ class LCS:
         #                             dask='parallelized',
         #                             output_dtypes=[float]
         #                             )
-        input_arrays = create_arrays_list(def_tensor)
         verboseprint("*---- Computing eigenvalues ----*")
-        data = compute_eigenvalues(input_arrays)
+        data = xr.apply_ufunc(compute_eigenvalues, def_tensor.groupby('points'))
         verboseprint("*---- Done eigenvalues ----*")
         eigenvalues = def_tensor.copy(data=data)
         eigenvalues = eigenvalues.unstack('points')
@@ -159,26 +160,19 @@ def compute_deformation_tensor(x_departure: xr.DataArray, y_departure: xr.DataAr
     return def_tensor
 
 
-@jit(parallel=True)
-def compute_eigenvalues(arrays_list):
+def compute_eigenvalues(def_tensor):
     """
 
     :rtype: np.array
     """
-    out_list = []
-    for i in numba.prange(len(arrays_list)):
-        def_tensor = arrays_list[i]
-        d_matrix = def_tensor.reshape([2, 2])
-        cauchy_green = np.matmul(d_matrix.T, d_matrix)
-        eigenvalues = max(np.linalg.eig(cauchy_green.reshape([2, 2]))[0])
-        eigenvalues = np.repeat(eigenvalues, 4).reshape(
-            [4])  # repeating the same value 4 times just to fill the xr.DataArray in a dummy dimension
-        out_list.append(eigenvalues)
-    out = np.stack(out_list, axis=1)
-    return out
+    d_matrix = def_tensor.reshape([2, 2])
+    cauchy_green = np.matmul(d_matrix.T, d_matrix)
+    eigenvalues = max(np.linalg.eig(cauchy_green.reshape([2, 2]))[0])
+    eigenvalues = np.repeat(eigenvalues, 4).reshape(
+        [4])  # repeating the same value 4 times just to fill the xr.DataArray in a dummy dimension
+    return eigenvalues
 
 
-@jit(parallel=True)
 def create_arrays_list(ds, groupdim='points'):
     ds_groups = list(ds.groupby(groupdim))
     input_arrays = []

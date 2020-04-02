@@ -62,9 +62,11 @@ def parcel_propagation(U: xr.DataArray,
     pos_list_y = []
     # pos_list_x.append(positions_x)  # appending t=0
     # pos_list_y.append(positions_y)
+
+
     for time in times:
         verboseprint(f'Propagating time {time}')
-        v_data = V.sel({propdim: time}).values
+        v_data = V.sel({propdim: time})
         interpolator_y = RectSphereBivariateSpline(V.latitude.values, V.longitude.values, v_data, s=s)
         va = interpolator_y.ev(positions_y.ravel(), positions_x.ravel()).reshape(positions_y.shape)
         positions_y = positions_y + timestep * conversion_y * va
