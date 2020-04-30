@@ -5,6 +5,7 @@ Module LCS
 This module provides class (LCS) to compute the Finite-time Lyapunov Exponent from atmospheric wind fields (latitude, longitude
 and time).K
 """
+from scipy.linalg import eigvals
 
 import xarray as xr
 import numpy as np
@@ -13,7 +14,7 @@ import numba
 import pandas as pd
 from typing import List
 from LagrangianCoherence.LCS.trajectory import parcel_propagation
-
+from xr_tools.tools import latlonsel
 # Types of Lagrangian coherence:
 LCS_TYPES: List[str]
 LCS_TYPES = ['attracting', 'repelling']
@@ -26,7 +27,7 @@ class LCS:
     earth_r = 6371000
 
     def __init__(self, lcs_type: str, timestep: float = 1, timedim='time',
-                 shearless=False, SETTLS_order=0):
+                 shearless=False, SETTLS_order=0, subdomain=None):
         """
 
         :param lcs_type: str,
@@ -49,6 +50,7 @@ class LCS:
         self.SETTLS_order = SETTLS_order
         self.timedim = timedim
         self.shearless = shearless
+        self.subdomain = subdomain
 
     def __call__(self, ds: xr.Dataset = None, u: xr.DataArray = None, v: xr.DataArray = None,
                  verbose=True) -> xr.DataArray:
@@ -100,9 +102,12 @@ class LCS:
         x_departure, y_departure = parcel_propagation(u, v, timestep, propdim=self.timedim,
                                                       SETTLS_order=self.SETTLS_order,
                                                       verbose=verbose)
+
         verboseprint("*---- Computing deformation tensor ----*")
 
         def_tensor = compute_deformation_tensor(x_departure, y_departure, timestep, verbose=verbose)
+        if isinstance(self.subdomain, dict):
+            def_tensor = latlonsel(def_tensor, **self.subdomain)
         def_tensor = def_tensor.stack({'points': ['latitude', 'longitude']})
         def_tensor = def_tensor.dropna(dim='points')
         # eigenvalues = xr.apply_ufunc(lambda x: compute_eigenvalues(x), def_tensor.groupby('points'),
@@ -110,11 +115,11 @@ class LCS:
         #                             output_dtypes=[float]
         #                             )
         verboseprint("*---- Computing eigenvalues ----*")
-        data = xr.apply_ufunc(compute_eigenvalues, def_tensor.groupby('points'))
+
+        eigenvalues = xr.apply_ufunc(compute_eigenvalues, def_tensor.groupby('points'),
+                              input_core_dims=[['derivatives']])
         verboseprint("*---- Done eigenvalues ----*")
-        eigenvalues = def_tensor.copy(data=data)
         eigenvalues = eigenvalues.unstack('points')
-        eigenvalues = eigenvalues.isel(derivatives=0).drop('derivatives')
         eigenvalues = eigenvalues.expand_dims({self.timedim: [u[self.timedim].values[0]]})
 
         return eigenvalues
@@ -167,9 +172,8 @@ def compute_eigenvalues(def_tensor):
     """
     d_matrix = def_tensor.reshape([2, 2])
     cauchy_green = np.matmul(d_matrix.T, d_matrix)
-    eigenvalues = max(np.linalg.eig(cauchy_green.reshape([2, 2]))[0])
-    eigenvalues = np.repeat(eigenvalues, 4).reshape(
-        [4])  # repeating the same value 4 times just to fill the xr.DataArray in a dummy dimension
+    eigenvalues = np.max(np.real(eigvals(cauchy_green.reshape([2, 2]))))
+
     return eigenvalues
 
 
