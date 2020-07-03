@@ -105,7 +105,7 @@ class LCS:
 
         verboseprint("*---- Computing deformation tensor ----*")
 
-        def_tensor = compute_deformation_tensor(x_departure, y_departure, timestep, verbose=verbose)
+        def_tensor = compute_deformation_tensor(x_departure, y_departure)
         if isinstance(self.subdomain, dict):
             def_tensor = latlonsel(def_tensor, **self.subdomain)
         def_tensor = def_tensor.stack({'points': ['latitude', 'longitude']})
@@ -125,8 +125,7 @@ class LCS:
         return eigenvalues
 
 
-def compute_deformation_tensor(x_departure: xr.DataArray, y_departure: xr.DataArray, timestep: float,
-                               verbose=False) -> xr.DataArray:
+def compute_deformation_tensor(x_departure: xr.DataArray, y_departure: xr.DataArray) -> xr.DataArray:
     """
     :param u: xr.DataArray, array corresponding to the zonal wind field
     :param v: xr.DataArray, array corresponding to the meridional wind field
