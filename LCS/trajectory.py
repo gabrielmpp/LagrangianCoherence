@@ -42,16 +42,6 @@ def parcel_propagation(U: xr.DataArray,
         V = V.copy()
 
     tracer_account = False
-    if isinstance(C, type(None)):
-        C = U.copy(data=np.zeros(shape=U.shape))
-    else:
-        tracer_account = True
-        rel_contribution_list = []
-    if isinstance(Srcs, type(None)):
-        Srcs = U.copy(data=np.zeros(shape=U.shape))
-    else:
-        tracer_account = True
-        rel_contribution_list = []
 
     verboseprint = print if verbose else lambda *a, **k: None
     latmin = deepcopy(U.latitude.min().values) - np.abs(U.latitude.diff('latitude').values[0]) # offset so that the interp works
@@ -66,6 +56,25 @@ def parcel_propagation(U: xr.DataArray,
     V = V.sortby('longitude')
     U = U.sortby('latitude')
     V = V.sortby('latitude')
+
+    if isinstance(C, type(None)):
+        C = U.copy(data=np.zeros(shape=U.shape))
+    else:
+        C = C.assign_coords(latitude=(C.latitude.values - latmin) * np.pi / 180,
+                            longitude=(C.longitude.values - lonmin) * np.pi / 180)
+        C = C.sortby('longitude')
+        C = C.sortby('latitude')
+        tracer_account = True
+        rel_contribution_list = []
+    if isinstance(Srcs, type(None)):
+        Srcs = U.copy(data=np.zeros(shape=U.shape))
+    else:
+        Srcs = Srcs.assign_coords(latitude=(Srcs.latitude.values - latmin) * np.pi / 180,
+                            longitude=(Srcs.longitude.values - lonmin) * np.pi / 180)
+        Srcs = Srcs.sortby('longitude')
+        Srcs = Srcs.sortby('latitude')
+        tracer_account = True
+        rel_contribution_list = []
 
     earth_r = 6371000
     conversion_y = 1 / earth_r  # converting m/s to rad/s
@@ -155,11 +164,20 @@ def parcel_propagation(U: xr.DataArray,
             k += 1
         pos_list_x.append(positions_x)
         pos_list_y.append(positions_y)
-        if tracer_account:
-            Srcs.sel()
-            positions_x
 
-        U = U.assign_coords(latitude= U.latitude.values * 180 / np.pi + latmin,
+        if tracer_account:
+            srcs = Srcs.sel({propdim: time}).interp(latitude=positions_y.ravel(), longitude=positions_x.ravel(),
+                                                    method='linear')
+            c = C.sel({propdim: time}).interp(latitude=positions_y.ravel(), longitude=positions_x.ravel(),
+                                                    method='linear')
+            srcs = srcs.sortby('longitude')
+            srcs = srcs.sortby('latitude')
+            c = c.sortby('longitude')
+            c = c.sortby('latitude')
+            srcs = 1 - np.exp(-srcs/c)
+            rel_contribution_list.append(srcs)
+
+    U = U.assign_coords(latitude= U.latitude.values * 180 / np.pi + latmin,
                             longitude = U.longitude.values * 180 / np.pi + lonmin)
     V = V.assign_coords(latitude= V.latitude.values * 180 / np.pi + latmin,
                         longitude = V.longitude.values * 180 / np.pi + lonmin)

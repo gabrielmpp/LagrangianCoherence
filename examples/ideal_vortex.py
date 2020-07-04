@@ -65,8 +65,8 @@ def ideal_vortex(lat_min, lat_max, lon_min, lon_max, dx, dy, nt, max_intensity=1
     theta = np.zeros([ny, nx, nt])
     v = np.zeros([ny, nx, nt])
     coords = {
-        'lon': lons,
-        'lat': lats,
+        'longitude': lons,
+        'latitude': lats,
         'time': pd.date_range('2000-01-01', periods=nt, freq='6H')
     }
 
@@ -95,10 +95,10 @@ def ideal_vortex(lat_min, lat_max, lon_min, lon_max, dx, dy, nt, max_intensity=1
                     v[y, x, t] = np.sin(theta[y, x, t] + np.pi) * mag
         is_not_initial_time = 1
 
-    u = xr.DataArray(u, dims=['lat', 'lon', 'time'], coords=coords)
-    v = xr.DataArray(v, dims=['lat', 'lon', 'time'], coords=coords)
-    wv = xr.DataArray(wv, dims=['lat', 'lon', 'time'], coords=coords)
-    evap = xr.DataArray(evap, dims=['lat', 'lon', 'time'], coords=coords)
+    u = xr.DataArray(u, dims=['latitude', 'longitude', 'time'], coords=coords)
+    v = xr.DataArray(v, dims=['latitude', 'longitude', 'time'], coords=coords)
+    wv = xr.DataArray(wv, dims=['latitude', 'longitude', 'time'], coords=coords)
+    evap = xr.DataArray(evap, dims=['latitude', 'longitude', 'time'], coords=coords)
 
     return u, v, wv, evap
 
@@ -158,10 +158,9 @@ v.name = 'v'
 ds = xr.merge([u, v])
 u_plot = u.isel(time=-1).values
 v_plot = v.isel(time=-1).values
-x_plot = v.isel(time=-1).lon.values
-y_plot = v.isel(time=-1).lat.values
+x_plot = v.isel(time=-1).longitude.values
+y_plot = v.isel(time=-1).latitude.values
 
-ds = ds.rename({'lat': 'latitude', 'lon': 'longitude'})
 x, y = trajectory.parcel_propagation(ds.u, ds.v,
                                      timestep=-6 * 3600,
                                      propdim='time',
