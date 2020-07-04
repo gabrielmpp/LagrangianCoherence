@@ -53,11 +53,15 @@ def ideal_vortex(lat_min, lat_max, lon_min, lon_max, dx, dy, nt, max_intensity=1
     Returns: vorticity numpy array
     -------
     """
+    evap_center = [-60, 0]
+    evap_rate = 10
     lats = np.arange(lat_min, lat_max, dy)
     lons = np.arange(lon_min, lon_max, dx)
     nx = lons.shape[0]
     ny = lats.shape[0]
     u = np.zeros([ny, nx, nt])
+    evap = np.zeros([ny, nx, nt])
+    wv = np.zeros([ny, nx, nt])
     theta = np.zeros([ny, nx, nt])
     v = np.zeros([ny, nx, nt])
     coords = {
@@ -66,12 +70,17 @@ def ideal_vortex(lat_min, lat_max, lon_min, lon_max, dx, dy, nt, max_intensity=1
         'time': pd.date_range('2000-01-01', periods=nt, freq='6H')
     }
 
+    is_not_initial_time = 0
     for t in range(nt):
         for x in range(nx):
             for y in range(ny):
                 new_x = lons[x] - center[0] - u_c * t
                 new_y = lats[y] - center[1] - v_c * t
                 distance = np.sqrt(new_x ** 2 + new_y ** 2)
+                distance_evap = np.sqrt((lons[x] - evap_center[0]) ** 2 +
+                                        (lats[y] - evap_center[1]) ** 2)
+                evap[y, x, t] = evap_rate / (distance_evap + 1)**2
+                wv[y, x, t] = wv[y, x, t - 1*is_not_initial_time] + evap[y, x, t]
 
                 theta[y, x, t] = np.arccos(new_y / (distance + 1e-8))
                 if distance > radius:
@@ -84,12 +93,14 @@ def ideal_vortex(lat_min, lat_max, lon_min, lon_max, dx, dy, nt, max_intensity=1
                     v[y, x, t] = np.sin(theta[y, x, t]) * mag
                 else:
                     v[y, x, t] = np.sin(theta[y, x, t] + np.pi) * mag
+        is_not_initial_time = 1
 
     u = xr.DataArray(u, dims=['lat', 'lon', 'time'], coords=coords)
     v = xr.DataArray(v, dims=['lat', 'lon', 'time'], coords=coords)
-    theta = xr.DataArray(theta, dims=['lat', 'lon', 'time'], coords=coords)
+    wv = xr.DataArray(wv, dims=['lat', 'lon', 'time'], coords=coords)
+    evap = xr.DataArray(evap, dims=['lat', 'lon', 'time'], coords=coords)
 
-    return u, v, theta
+    return u, v, wv, evap
 
 
 vortex_config_equator = dict(
@@ -97,8 +108,8 @@ vortex_config_equator = dict(
     lat_max=40,
     lon_min=-80,
     lon_max=0,
-    dx=0.5,
-    dy=0.5,
+    dx=2,
+    dy=2,
     u_c=0.5,
     v_c=0.5,
     nt=20,
@@ -137,7 +148,9 @@ saddle_config = dict(
 )
 
 vortex_config = vortex_config_equator
-u, v, theta = ideal_vortex(**vortex_config)
+u, v, wv, evap = ideal_vortex(**vortex_config)
+wv.isel(time=10).plot()
+plt.show()
 # u, v = ideal_saddle(**saddle_config)
 u.name = 'u'
 v.name = 'v'
@@ -154,8 +167,10 @@ x, y = trajectory.parcel_propagation(ds.u, ds.v,
                                      propdim='time',
                                      SETTLS_order=8,
                                      copy=True,
-                                     s=None)
-
+                                     s=None,
+                                     C=wv,
+                                     Srcs=evap)
+dss = ds.groupby('time')
 lcs = LCS.LCS(lcs_type='repelling', timestep=-6 * 3600, timedim='time', SETTLS_order=8, )
 ftle = lcs(ds)
 ftle = np.log(np.sqrt(ftle)) / vortex_config['nt']

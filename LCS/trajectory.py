@@ -3,6 +3,8 @@ import numpy as np
 import pandas as pd
 from scipy.interpolate import RectSphereBivariateSpline, CubicSpline, griddata
 from copy import deepcopy
+
+
 def parcel_propagation(U: xr.DataArray,
                        V: xr.DataArray,
                        timestep: float = 1,
@@ -11,7 +13,9 @@ def parcel_propagation(U: xr.DataArray,
                        s: float = None,
                        return_traj: bool = False,
                        SETTLS_order=0,
-                       copy=False):
+                       copy=False,
+                       C=None,
+                       Srcs=None):
     """
     Method to propagate the parcel given u and v and, optionally, w (m/s)
 
@@ -36,6 +40,19 @@ def parcel_propagation(U: xr.DataArray,
     if copy:
         U = U.copy()
         V = V.copy()
+
+    tracer_account = False
+    if isinstance(C, type(None)):
+        C = U.copy(data=np.zeros(shape=U.shape))
+    else:
+        tracer_account = True
+        rel_contribution_list = []
+    if isinstance(Srcs, type(None)):
+        Srcs = U.copy(data=np.zeros(shape=U.shape))
+    else:
+        tracer_account = True
+        rel_contribution_list = []
+
     verboseprint = print if verbose else lambda *a, **k: None
     latmin = deepcopy(U.latitude.min().values) - np.abs(U.latitude.diff('latitude').values[0]) # offset so that the interp works
     lonmin = deepcopy(U.longitude.min().values) - np.abs(U.latitude.diff('latitude').values[0])
@@ -136,22 +153,23 @@ def parcel_propagation(U: xr.DataArray,
             positions_x[np.where(positions_x > x_max)] = x_max
 
             k += 1
-
-
         pos_list_x.append(positions_x)
         pos_list_y.append(positions_y)
+        if tracer_account:
+            Srcs.sel()
+            positions_x
 
-    U = U.assign_coords(latitude= U.latitude.values * 180 / np.pi + latmin,
-                        longitude = U.longitude.values * 180 / np.pi + lonmin)
+        U = U.assign_coords(latitude= U.latitude.values * 180 / np.pi + latmin,
+                            longitude = U.longitude.values * 180 / np.pi + lonmin)
     V = V.assign_coords(latitude= V.latitude.values * 180 / np.pi + latmin,
                         longitude = V.longitude.values * 180 / np.pi + lonmin)
     for i in range(len(pos_list_x)):
         pos_list_x[i] = pos_list_x[i] * 180 / np.pi + lonmin
         pos_list_y[i] = pos_list_y[i] * 180 / np.pi + latmin
         pos_list_x[i] = xr.DataArray(pos_list_x[i].T, dims=['latitude', 'longitude'],
-                               coords=[U.latitude.values.copy(), U.longitude.values.copy()])
+                                     coords=[U.latitude.values.copy(), U.longitude.values.copy()])
         pos_list_y[i] = xr.DataArray(pos_list_y[i].T, dims=['latitude', 'longitude'],
-                               coords=[U.latitude.values.copy(), U.longitude.values.copy()])
+                                     coords=[U.latitude.values.copy(), U.longitude.values.copy()])
     # time_list = U[propdim].values.tolist()
     # time_list.append(pd.Timestamp(pd.Timestamp(U[propdim].values[-1]) + pd.Timedelta(str(timestep)+'s')))
     positions_x = xr.concat(pos_list_x, dim=pd.Index(U[propdim].values, name=propdim))
