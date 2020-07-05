@@ -7,7 +7,7 @@ atmospheric data. The trajectories are computed in a limited domain on the spher
 ‘Stable Extrapolation Two‐Time‐Level Scheme' (Hortal, 2002). The gradient of the flow-map is computed by
 a simple finite-difference approximation. The possible outputs are 1) the FTLE, 2) the departure points or 3) the trajectories.
 
-
+![alt text](https://github.com/gabrielmpp/LagrangianCoherence/blob/master/examples/figs/ideal_vortex.png?raw=true)
 
 
 
