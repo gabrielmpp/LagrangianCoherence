@@ -174,8 +174,6 @@ lcs = LCS.LCS(lcs_type='repelling', timestep=-6 * 3600, timedim='time', SETTLS_o
 ftle = lcs(ds)
 ftle = np.log(np.sqrt(ftle)) / vortex_config['nt']
 
-np.abs(u).sel(lon=u.lon.mean(), method='nearest').isel(time=0).plot()
-plt.show()
 
 fig, ax = plt.subplots(1, 1, subplot_kw={'projection': ccrs.PlateCarree()}, figsize=[8, 8])
 x.plot.contourf(levels=20, cmap=cmr.iceburn, vmin=x.values.min(), vmax=x.values.max(), ax=ax, add_colorbar=True)
@@ -183,7 +181,9 @@ ax.streamplot(x=x_plot, y=y_plot, u=u_plot, v=v_plot)
 ax.coastlines()
 draw_circle = plt.Circle(vortex_config['center'], vortex_config['radius'], fill=False, color='red')
 ax.add_artist(draw_circle, )
-plt.show()
+plt.savefig('examples/figs/ideal_vortex.png')
+plt.close()
+
 fig, ax = plt.subplots(1, 1, subplot_kw={'projection': ccrs.PlateCarree()}, figsize=[8, 8])
 y.plot.contourf(levels=20, cmap=cmr.iceburn, vmin=y.values.min(), vmax=y.values.max(), ax=ax, add_colorbar=True)
 ax.streamplot(x=x_plot, y=y_plot, u=u_plot, v=v_plot)
@@ -193,70 +193,9 @@ ax.add_artist(draw_circle, )
 plt.show()
 
 fig, ax = plt.subplots(1, 1, subplot_kw={'projection': ccrs.PlateCarree()}, figsize=[8, 8])
-ftle.isel(time=0).plot(cmap=cmr.rainforest, vmin=0, ax=ax, vmax=0.15)
+ftle.isel(time=0).plot.contourf(levels=20, cmap=cmr.rainforest, vmin=0, ax=ax, vmax=0.15)
 draw_circle = plt.Circle(vortex_config['center'], vortex_config['radius'], fill=False, color='red')
 ax.coastlines()
 ax.add_artist(draw_circle)
-plt.show()
-
-from skimage.filters import frangi, hessian
-
-ridges = ftle.groupby('time').apply(hessian)
-ftle.plot(cmap=cmr.rainforest, vmin=0)
-ridges.isel(time=0).plot.contour()
-plt.show()
-
-div = u.differentiate('lon').isel(time=0) + v.differentiate('lat').isel(time=0)
-div.plot()
-plt.show()
-from scipy.interpolate import RectSphereBivariateSpline
-
-lats = np.radians((ds.latitude + 90) % 90).values
-lons = np.radians((ds.longitude + 180) % 180).values
-data = ds.u.isel(time=0).values
-positions_y, positions_x = np.meshgrid(lats, lons)
-
-interpolator_y = RectSphereBivariateSpline(lats, lons, data)
-va = interpolator_y(lats + 1e-4, lons)
-plt.imshow(va)
-plt.show()
-plt.imshow(data)
-plt.show()
-
-va.shape()
-va = interpolator_y(lats + 1e-4, lons + 1e-4)
-plt.imshow(va)
-plt.show()
-plt.imshow(data)
-plt.show()
-
-theta = np.linspace(0., np.pi, 7)
-phi = np.linspace(0., 2 * np.pi, 9)
-data = np.empty((theta.shape[0], phi.shape[0]))
-data[:, 0], data[0, :], data[-1, :] = 0., 0., 0.
-data[1:-1, 1], data[1:-1, -1] = 1., 1.
-data[1, 1:-1], data[-2, 1:-1] = 1., 1.
-data[2:-2, 2], data[2:-2, -2] = 2., 2.
-data[2, 2:-2], data[-3, 2:-2] = 2., 2.
-data[3, 3:-2] = 3.
-data = np.roll(data, 4, 1)
-
-lats, lons = np.meshgrid(theta, phi)
-from scipy.interpolate import SmoothSphereBivariateSpline
-
-lut = RectSphereBivariateSpline(lats.ravel(), lons.ravel(),
-                                data.T.ravel(), s=3.5)
-fine_lats = np.linspace(0., np.pi, 70)
-fine_lons = np.linspace(0., 2 * np.pi, 90)
-data_orig = lut(theta, phi)
-data_smth = lut(fine_lats, fine_lons)
-import matplotlib.pyplot as plt
-
-fig = plt.figure()
-ax1 = fig.add_subplot(131)
-ax1.imshow(data, interpolation='nearest')
-ax2 = fig.add_subplot(132)
-ax2.imshow(data_orig, interpolation='nearest')
-ax3 = fig.add_subplot(133)
-ax3.imshow(data_smth, interpolation='nearest')
-plt.show()
+plt.savefig('examples/figs/ideal_vortex_FTLE.png')
+plt.close()
