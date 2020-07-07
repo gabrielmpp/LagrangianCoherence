@@ -66,6 +66,7 @@ def parcel_propagation(U: xr.DataArray,
         C = C.sortby('latitude')
         tracer_account = True
         rel_contribution_list = []
+
     if isinstance(Srcs, type(None)):
         Srcs = U.copy(data=np.zeros(shape=U.shape))
     else:
@@ -78,9 +79,11 @@ def parcel_propagation(U: xr.DataArray,
 
     earth_r = 6371000
     conversion_y = 1 / earth_r  # converting m/s to rad/s
-    conversion_x = 1 / (earth_r * xr.apply_ufunc(lambda x: np.abs(np.cos(x)), U.latitude + latmin * np.pi/360))
+    conversion_x = 1 / (earth_r * xr.apply_ufunc(lambda x: np.abs(np.cos(x)), U.latitude + latmin * np.pi/180))
     conversion_x, _ = xr.broadcast(conversion_x, U.isel({propdim: 0}))
+    sign = 1
     times = U[propdim].values.tolist()
+
     if timestep < 0:
         times.reverse()  # inplace
 
@@ -99,7 +102,6 @@ def parcel_propagation(U: xr.DataArray,
     pos_list_y = []
     # pos_list_x.append(positions_x)  # appending t=0
     # pos_list_y.append(positions_y)
-    method='linear'
 
 
     for time in times:
@@ -113,7 +115,6 @@ def parcel_propagation(U: xr.DataArray,
         # va = va.reshape(positions_y.shape)
 
         positions_y = positions_y + timestep * conversion_y * va
-
 
         u_data = U.sel({propdim: time}).values
         interpolator_x = RectSphereBivariateSpline(U.latitude.values, U.longitude.values, u_data, s=s)
@@ -190,8 +191,8 @@ def parcel_propagation(U: xr.DataArray,
                                      coords=[U.latitude.values.copy(), U.longitude.values.copy()])
     # time_list = U[propdim].values.tolist()
     # time_list.append(pd.Timestamp(pd.Timestamp(U[propdim].values[-1]) + pd.Timedelta(str(timestep)+'s')))
-    positions_x = xr.concat(pos_list_x, dim=pd.Index(U[propdim].values, name=propdim))
-    positions_y = xr.concat(pos_list_y, dim=pd.Index(U[propdim].values, name=propdim))
+    positions_x = xr.concat(pos_list_x, dim=pd.Index(pd.to_datetime(times), name=propdim))
+    positions_y = xr.concat(pos_list_y, dim=pd.Index(pd.to_datetime(times), name=propdim))
     if not return_traj:
         positions_x = positions_x.isel({propdim: -1})
         positions_y = positions_y.isel({propdim: -1})
