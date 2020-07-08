@@ -3,7 +3,7 @@ Module LCS
 ================
 
 This module provides class (LCS) to compute the Finite-time Lyapunov Exponent from atmospheric wind fields (latitude, longitude
-and time).K
+and time).
 """
 from scipy.linalg import eigvals
 
@@ -27,7 +27,7 @@ class LCS:
     earth_r = 6371000
 
     def __init__(self, lcs_type: str, timestep: float = 1, timedim='time',
-                 shearless=False, SETTLS_order=0, subdomain=None):
+                 shearless=False, SETTLS_order=0, subdomain=None, cg_lambda=np.max):
         """
 
         :param lcs_type: str,
@@ -51,6 +51,7 @@ class LCS:
         self.timedim = timedim
         self.shearless = shearless
         self.subdomain = subdomain
+        self.cg_lambda = cg_lambda
 
     def __call__(self, ds: xr.Dataset = None, u: xr.DataArray = None, v: xr.DataArray = None,
                  verbose=True) -> xr.DataArray:
@@ -116,11 +117,22 @@ class LCS:
         #                             )
         verboseprint("*---- Computing eigenvalues ----*")
 
-        eigenvalues = xr.apply_ufunc(compute_eigenvalues, def_tensor.groupby('points'),
+        eigenvalues = xr.apply_ufunc(self.compute_eigenvalues, def_tensor.groupby('points'),
                               input_core_dims=[['derivatives']])
         verboseprint("*---- Done eigenvalues ----*")
         eigenvalues = eigenvalues.unstack('points')
         eigenvalues = eigenvalues.expand_dims({self.timedim: [u[self.timedim].values[0]]})
+
+        return eigenvalues
+
+    def compute_eigenvalues(self, def_tensor):
+        """
+
+        :rtype: np.array
+        """
+        d_matrix = def_tensor.reshape([2, 2])
+        cauchy_green = np.matmul(d_matrix.T, d_matrix)
+        eigenvalues = self.cg_lambda(np.real(eigvals(cauchy_green.reshape([2, 2]))))
 
         return eigenvalues
 
@@ -158,115 +170,15 @@ def compute_deformation_tensor(x_departure: xr.DataArray, y_departure: xr.DataAr
     def_tensor = def_tensor.to_array()
     def_tensor = def_tensor.rename({'variable': 'derivatives'})
     def_tensor = def_tensor.transpose('derivatives', 'latitude', 'longitude')
-    # from xrviz.dashboard import Dashboard
-    # dashboard = Dashboard(def_tensor)
-    # dashboard.show()
+
     return def_tensor
-
-
-def compute_eigenvalues(def_tensor):
-    """
-
-    :rtype: np.array
-    """
-    d_matrix = def_tensor.reshape([2, 2])
-    cauchy_green = np.matmul(d_matrix.T, d_matrix)
-    eigenvalues = np.max(np.real(eigvals(cauchy_green.reshape([2, 2]))))
-
-    return eigenvalues
 
 
 def create_arrays_list(ds, groupdim='points'):
     ds_groups = list(ds.groupby(groupdim))
     input_arrays = []
-    for label, group in ds_groups:  # have to do that because bloody groupby returns the labels
+    for label, group in ds_groups:
         input_arrays.append(group.values)
     return input_arrays
 
 
-def sampleData() -> xr.Dataset:
-    """
-    Function to create sample xr.Dataarray
-    :return: xr.Dataarray
-
-    >>> sampleData()
-    <xarray.Dataset>
-    Dimensions:    (latitude: 200, longitude: 100, time: 4)
-    Coordinates:
-      * latitude   (latitude) float64 -80.0 -79.5 -78.99 -78.49 ... 18.99 19.5 20.0
-      * longitude  (longitude) float64 -80.0 -79.49 -78.99 ... -31.01 -30.51 -30.0
-      * time       (time) datetime64[ns] 2000-01-01 ... 2000-01-01T18:00:00
-    Data variables:
-        u          (latitude, longitude, time) float64 19.4 18.79 ... 2.053 1.712
-        v          (latitude, longitude, time) float64 4.679 4.534 ... 26.33 21.95
-
-    """
-    import pandas as pd
-    ntime = 4
-    ky = 10
-    kx = 40
-    lat1 = -80
-    lat2 = 20
-    lon1 = -80
-    lon2 = -30
-    dx = 0.5
-
-    nlat = int((lat2 - lat1) / dx)
-    nlon = int((lon2 - lon1) / dx)
-    latitude = np.linspace(lat1, lat2, nlat)
-    longitude = np.linspace(lon1, lon2, nlon)
-    time = pd.date_range("2000-01-01T00:00:00", periods=ntime, freq="6H")
-    time_idx = np.array([x for x in range(len(time))])
-
-    frq = 0.25
-    u_data = 20 * np.ones([nlat, nlon, len(time)]) * (np.sin(ky * np.pi * latitude / 180) ** 2).reshape(
-        [nlat, 1, 1]) * np.cos(time_idx * frq).reshape([1, 1, len(time)])
-    v_data = 40 * np.ones([nlat, nlon, len(time)]) * (np.sin(kx * np.pi * longitude / 360) ** 2).reshape(
-        [1, nlon, 1]) * np.cos(time_idx * frq).reshape([1, 1, len(time)])
-
-    u = xr.DataArray(u_data, dims=['latitude', 'longitude', 'time'],
-                     coords={'latitude': latitude.copy(), 'longitude': longitude.copy(), 'time': time.copy()})
-    v = xr.DataArray(v_data, dims=['latitude', 'longitude', 'time'],
-                     coords={'latitude': latitude.copy(), 'longitude': longitude.copy(), 'time': time.copy()})
-    u.name = 'u'
-    v.name = 'v'
-    ds = xr.merge([u, v])
-    return ds
-
-
-def run_example():
-    import matplotlib.pyplot as plt
-    import pandas as pd
-
-    ftle = lcs(ds)
-    dep_x, dep_y = parcel_propagation(u.copy(), v.copy(), timestep=timestep, subtimes_len=subtimes_len)
-    origin = np.meshgrid(longitude, latitude)[1]
-    displacement = dep_x.copy(data=dep_y - origin)
-    mag = (u.isel(time=0).values ** 2 + v.isel(time=0).values ** 2) ** 0.5
-    plt.streamplot(longitude, latitude, u.isel(time=0).values, v.isel(time=0).values, color=mag)
-    (displacement / len(time)).plot(vmax=10, vmin=-10, cmap="RdBu")
-    plt.show()
-    dep_x.plot(cmap='rainbow', vmin=-80, vmax=-30)
-    plt.show()
-    dep_y.plot(cmap='rainbow', vmax=20, vmin=-80)
-    plt.streamplot(longitude, latitude, u.isel(time=0).values, v.isel(time=0).values)
-    plt.show()
-
-    #
-    u.isel(time=0).plot()
-    plt.show()
-    plt.streamplot(longitude, latitude, u.isel(time=2).values, v.isel(time=2).values)
-    ftle = ftle.where(dep_x <= dep_x.longitude.max())
-    ftle = ftle.where(dep_x >= dep_x.longitude.min())
-    ftle = ftle.where(dep_y <= dep_x.latitude.max())
-    ftle = ftle.where(dep_y >= dep_x.latitude.min())
-
-    ftle.isel(time=0).plot(vmax=50)
-    plt.streamplot(longitude, latitude, u.isel(time=0).values, v.isel(time=0).values)
-
-    plt.show()
-    print("s")
-
-
-if __name__ == '__main__':
-    run_example()
