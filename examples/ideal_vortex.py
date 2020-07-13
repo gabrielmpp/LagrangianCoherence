@@ -127,17 +127,31 @@ def shear_flow(lat_min, lat_max, lon_min, lon_max, dx, dy, nt, max_intensity=10,
     return u, v
 
 
-def ideal_vortex(lat_min, lat_max, lon_min, lon_max, dx, dy, nt, max_intensity=10, radius=5, center=None, u_c=0, v_c=0,
+def ideal_vortex(lat_min, lat_max, lon_min, lon_max, dx, dy, nt,
+                 max_intensity=10, radius=5, center=None, u_c=0, v_c=0,
+                 diag_factor=0,
                  k=0):
     """
     Method to initialize an ideal vortex
     Parameters
     ----------
-    nx grid width
-    ny grid height
 
-    Returns: vorticity numpy array
+    k
+    diag_factor
+    v_c
+    u_c
+    center
+    radius
+    nt
+    dy
+    dx
+    lon_max
+    lon_min
+    lat_max
+    lat_min
+    max_intensity
     -------
+
     """
     evap_center = [-60, 0]
     evap_rate = 10
@@ -202,8 +216,8 @@ subdomain={'latitude': slice(-20, 20), 'longitude': slice(-40, 0)}
 
 
 vortex_config_subtropical = {'lat_min': -30 - 40, 'lat_max': -30+40, 'lon_min': -55 -40,'lon_max': -55+40, 'dx':1,
-                             'dy': 1, 'u_c': .5, 'k': 1,
-                         'v_c': 3, 'nt': 30, 'radius': 4, 'max_intensity': 1, 'center': [-55, -30]}
+                             'dy': 1, 'u_c': .5, 'k': 0, 'diag_factor': 1,
+                         'v_c': .3, 'nt': 30, 'radius': 4, 'max_intensity': 1, 'center': [-55, -30]}
 subdomain = {
     'latitude': slice(-20, 20),
     'longitude': slice(-60, -20),
@@ -303,8 +317,8 @@ plt.close()
 ## Dye plot
 
 for t in range(x.time.values.shape[0]):
-    u_plot = u.isel(time=t).values - vortex_config['u_c']
-    v_plot = v.isel(time=t).values- vortex_config['v_c'] * np.sin(vortex_config['k']*2*np.pi*t/vortex_config['nt'])
+    u_plot = u.isel(time=t).values# - vortex_config['u_c']
+    v_plot = v.isel(time=t).values# - vortex_config['v_c'] * np.sin(vortex_config['k']*2*np.pi*t/vortex_config['nt'])
     x_plot = v.isel(time=t).longitude.values
     y_plot = v.isel(time=t).latitude.values
 

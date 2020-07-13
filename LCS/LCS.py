@@ -15,6 +15,7 @@ import pandas as pd
 from typing import List
 from LagrangianCoherence.LCS.trajectory import parcel_propagation
 from xr_tools.tools import latlonsel
+
 # Types of Lagrangian coherence:
 LCS_TYPES: List[str]
 LCS_TYPES = ['attracting', 'repelling']
@@ -27,7 +28,8 @@ class LCS:
     earth_r = 6371000
 
     def __init__(self, lcs_type: str, timestep: float = 1, timedim='time',
-                 shearless=False, SETTLS_order=0, subdomain=None, cg_lambda=np.max):
+                 shearless=False, SETTLS_order=0, subdomain=None, cg_lambda=np.max,
+                 return_det=False):
         """
 
         :param lcs_type: str,
@@ -42,10 +44,13 @@ class LCS:
             Whether to ignore the shear deformation, default is False.
         :param subtimes_len:
             Sub-intervals to divide the time integration, default is 1.
+
+        ----------
         """
         assert isinstance(lcs_type, str), "Parameter lcs_type expected to be str"
         assert lcs_type in LCS_TYPES, f"lcs_type {lcs_type} not available"
         self.lcs_type = lcs_type
+        self.return_det = return_det
         self.timestep = timestep
         self.SETTLS_order = SETTLS_order
         self.timedim = timedim
@@ -116,9 +121,12 @@ class LCS:
         #                             output_dtypes=[float]
         #                             )
         verboseprint("*---- Computing eigenvalues ----*")
-
-        eigenvalues = xr.apply_ufunc(self.compute_eigenvalues, def_tensor.groupby('points'),
-                              input_core_dims=[['derivatives']])
+        if self.return_det:
+            func_to_apply = self.compute_determinant
+        else:
+            func_to_apply = self.compute_eigenvalues
+        eigenvalues = xr.apply_ufunc(func_to_apply, def_tensor.groupby('points'),
+                                     input_core_dims=[['derivatives']])
         verboseprint("*---- Done eigenvalues ----*")
         eigenvalues = eigenvalues.unstack('points')
         eigenvalues = eigenvalues.expand_dims({self.timedim: [u[self.timedim].values[0]]})
@@ -136,6 +144,17 @@ class LCS:
 
         return eigenvalues
 
+    @staticmethod
+    def compute_determinant(def_tensor):
+        """
+
+        :rtype: np.array
+        """
+        d_matrix = def_tensor.reshape([2, 2])
+        cauchy_green = np.matmul(d_matrix.T, d_matrix)
+        eigenvalues = np.linalg.det(cauchy_green.reshape([2, 2]))
+        return eigenvalues
+
 
 def compute_deformation_tensor(x_departure: xr.DataArray, y_departure: xr.DataArray) -> xr.DataArray:
     """
@@ -145,7 +164,6 @@ def compute_deformation_tensor(x_departure: xr.DataArray, y_departure: xr.DataAr
     :return: the deformation tensor
     :rtype: xarray.Dataarray
     """
-
 
     # u, v, eigengrid = interpolate_c_stagger(u, v)
     conversion_dydx = xr.apply_ufunc(lambda x: np.cos(x * np.pi / 180), y_departure.latitude)
@@ -180,5 +198,3 @@ def create_arrays_list(ds, groupdim='points'):
     for label, group in ds_groups:
         input_arrays.append(group.values)
     return input_arrays
-
-

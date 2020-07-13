@@ -44,8 +44,8 @@ def parcel_propagation(U: xr.DataArray,
     tracer_account = False
 
     verboseprint = print if verbose else lambda *a, **k: None
-    latmin = deepcopy(U.latitude.min().values) - np.abs(U.latitude.diff('latitude').values[0]) # offset so that the interp works
-    lonmin = deepcopy(U.longitude.min().values) - np.abs(U.latitude.diff('latitude').values[0])
+    latmin = deepcopy(U.latitude.min().values) - 2 # np.abs(U.latitude.diff('latitude').values[0]) # offset so that the interp works
+    lonmin = deepcopy(U.longitude.min().values) - 2 # np.abs(U.longitude.diff('longitude').values[0])
     U = U.assign_coords(latitude=(U.latitude.values - latmin) * np.pi / 180,
                         longitude=(U.longitude.values - lonmin) * np.pi / 180)
     V = V.assign_coords(latitude=(V.latitude.values - latmin) * np.pi / 180,
