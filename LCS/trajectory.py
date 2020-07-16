@@ -44,8 +44,8 @@ def parcel_propagation(U: xr.DataArray,
     tracer_account = False
 
     verboseprint = print if verbose else lambda *a, **k: None
-    latmin = deepcopy(U.latitude.min().values) - 2 # np.abs(U.latitude.diff('latitude').values[0]) # offset so that the interp works
-    lonmin = deepcopy(U.longitude.min().values) - 2 # np.abs(U.longitude.diff('longitude').values[0])
+    latmin = deepcopy(U.latitude.min().values) - np.abs(U.latitude.diff('latitude').values[0]) # offset so that the interp works
+    lonmin = deepcopy(U.longitude.min().values) - np.abs(U.longitude.diff('longitude').values[0])
     U = U.assign_coords(latitude=(U.latitude.values - latmin) * np.pi / 180,
                         longitude=(U.longitude.values - lonmin) * np.pi / 180)
     V = V.assign_coords(latitude=(V.latitude.values - latmin) * np.pi / 180,
@@ -81,7 +81,6 @@ def parcel_propagation(U: xr.DataArray,
     conversion_y = 1 / earth_r  # converting m/s to rad/s
     conversion_x = 1 / (earth_r * xr.apply_ufunc(lambda x: np.abs(np.cos(x)), U.latitude + latmin * np.pi/180))
     conversion_x, _ = xr.broadcast(conversion_x, U.isel({propdim: 0}))
-    sign = 1
     times = U[propdim].values.tolist()
 
     if timestep < 0:
@@ -103,7 +102,6 @@ def parcel_propagation(U: xr.DataArray,
     # pos_list_x.append(positions_x)  # appending t=0
     # pos_list_y.append(positions_y)
 
-
     for time in times:
         verboseprint(f'Propagating time {time}')
         v_data = V.sel({propdim: time}).values
@@ -114,11 +112,13 @@ def parcel_propagation(U: xr.DataArray,
         #               (positions_y.ravel(), positions_x.ravel()), method=method, rescale=True)
         # va = va.reshape(positions_y.shape)
 
-        positions_y = positions_y + timestep * conversion_y * va
 
         u_data = U.sel({propdim: time}).values
         interpolator_x = RectSphereBivariateSpline(U.latitude.values, U.longitude.values, u_data, s=s)
         ua = interpolator_x.ev(positions_y.ravel(), positions_x.ravel()).reshape(positions_x.shape)
+
+
+        positions_y = positions_y + timestep * conversion_y * va
         positions_x = positions_x + timestep * conversion_x.values.T * ua
         # Hard boundary
         positions_y[np.where(positions_y < y_min)] = y_min
@@ -128,7 +128,7 @@ def parcel_propagation(U: xr.DataArray,
         positions_x[np.where(positions_x < x_min)] = x_min
         positions_x[np.where(positions_x > x_max)] = x_max
 
-        # SETTLS algorithm for higher accuracy
+        # ECMWF's SETTLS algorithm for second-order advection accuracy (Hortal; 2002)
         k = 0
         while k < SETTLS_order:
             verboseprint(f'SETTLS iteration {k}')
