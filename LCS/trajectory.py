@@ -167,6 +167,7 @@ def parcel_propagation(U: xr.DataArray,
         pos_list_y.append(positions_y)
 
         if tracer_account:
+
             srcs = Srcs.sel({propdim: time}).interp(latitude=positions_y.ravel(), longitude=positions_x.ravel(),
                                                     method='linear')
             c = C.sel({propdim: time}).interp(latitude=positions_y.ravel(), longitude=positions_x.ravel(),

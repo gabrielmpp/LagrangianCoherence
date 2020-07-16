@@ -5,8 +5,9 @@ Module LCS
 This module provides class (LCS) to compute the Finite-time Lyapunov Exponent from atmospheric wind fields (latitude, longitude
 and time).
 """
-from scipy.linalg import eigvals
 
+from scipy.linalg import eigvals
+from dask.diagnostics import ProgressBar
 import xarray as xr
 import numpy as np
 from numba import jit
@@ -16,47 +17,32 @@ from typing import List
 from LagrangianCoherence.LCS.trajectory import parcel_propagation
 from xr_tools.tools import latlonsel
 
-# Types of Lagrangian coherence:
-LCS_TYPES: List[str]
-LCS_TYPES = ['attracting', 'repelling']
-
 
 class LCS:
     """
     API to compute the Finite-time Lyapunov exponent in 2D wind fields
     """
-    earth_r = 6371000
+    earth_r = 6371000  # metres
 
-    def __init__(self, lcs_type: str, timestep: float = 1, timedim='time',
-                 shearless=False, SETTLS_order=0, subdomain=None, cg_lambda=np.max,
-                 return_det=False):
+    def __init__(self, timestep: float = 1, timedim='time',
+                 SETTLS_order=0, subdomain=None):
         """
 
-        :param lcs_type: str,
-            Type of coherent structure: 'attracting' or 'repelling'.
         :param timestep: float,
             Timestep length in seconds.
         :param dataarray_template:
 
         :param timedim: str,
             Name of the time dimension, default is 'time'.
-        :param shearless: bool,
-            Whether to ignore the shear deformation, default is False.
         :param subtimes_len:
             Sub-intervals to divide the time integration, default is 1.
 
         ----------
         """
-        assert isinstance(lcs_type, str), "Parameter lcs_type expected to be str"
-        assert lcs_type in LCS_TYPES, f"lcs_type {lcs_type} not available"
-        self.lcs_type = lcs_type
-        self.return_det = return_det
         self.timestep = timestep
         self.SETTLS_order = SETTLS_order
         self.timedim = timedim
-        self.shearless = shearless
         self.subdomain = subdomain
-        self.cg_lambda = cg_lambda
 
     def __call__(self, ds: xr.Dataset = None, u: xr.DataArray = None, v: xr.DataArray = None,
                  verbose=True) -> xr.DataArray:
@@ -76,7 +62,7 @@ class LCS:
 
         >>> subtimes_len = 1
         >>> timestep = -6*3600 # 6 hours in seconds
-        >>> lcs = LCS(lcs_type='repelling', timestep=timestep, timedim='time', subtimes_len=subtimes_len)
+        >>> lcs = LCS(timestep=timestep, timedim='time', subtimes_len=subtimes_len)
         >>> ds = sampleData()
         >>> ftle = lcs(ds, verbose=False)
         """
@@ -87,7 +73,12 @@ class LCS:
         timestep = self.timestep
         timedim = self.timedim
         self.verbose = verbose
+
         if isinstance(ds, xr.Dataset):
+            u = ds.u.copy()
+            v = ds.v.copy()
+        elif isinstance(ds, str):
+            ds = xr.open_dataset(ds)
             u = ds.u.copy()
             v = ds.v.copy()
 
@@ -96,13 +87,6 @@ class LCS:
 
         assert set(u_dims) == set(v_dims), "u and v dims are different"
         assert set(u_dims) == {'latitude', 'longitude', timedim}, 'array dims should be latitude and longitude only'
-
-        # if not (hasattr(u, "x") and hasattr(u, "y")):
-        #     verboseprint("Ascribing x and y coords do u")
-        #     u = to_cartesian(u)
-        # if not (hasattr(v, "x") and hasattr(v, "y")):
-        #     verboseprint("Ascribing x and y coords do v")
-        #     v = to_cartesian(v)
 
         verboseprint("*---- Parcel propagation ----*")
         x_departure, y_departure = parcel_propagation(u, v, timestep, propdim=self.timedim,
@@ -121,38 +105,29 @@ class LCS:
         #                             output_dtypes=[float]
         #                             )
         verboseprint("*---- Computing eigenvalues ----*")
-        if self.return_det:
-            func_to_apply = self.compute_determinant
-        else:
-            func_to_apply = self.compute_eigenvalues
-        eigenvalues = xr.apply_ufunc(func_to_apply, def_tensor.groupby('points'),
-                                     input_core_dims=[['derivatives']])
+
+        # def_tensor = def_tensor.chunk({'points': int(def_tensor.points.shape[0]/10)})
+        def_tensor = def_tensor.chunk({'points': 1})
+
+        # -- Observation: Numpy's norm is equivalent to the square-root of the Cauchy-Green strain tensor.
+
+        eigenvalues = xr.apply_ufunc(lambda x: np.array(np.linalg.norm(x.reshape([2, 2]))).reshape([1]),
+                                     def_tensor,
+                                     input_core_dims=[['derivatives']],
+                                     # exclude_dims=set(('derivatives')),
+                                     # output_core_dims=[['derivatives']],
+                                     dask='parallelized',
+                                     output_dtypes=[float])
+
+        with ProgressBar():
+            eigenvalues = eigenvalues.load()
+
         verboseprint("*---- Done eigenvalues ----*")
         eigenvalues = eigenvalues.unstack('points')
-        eigenvalues = eigenvalues.expand_dims({self.timedim: [u[self.timedim].values[0]]})
+        timestamp = u[self.timedim].values[0] if np.sign(timestep) == 1 else u[self.timedim].values[-1]
+        eigenvalues['time'] = timestamp
+        eigenvalues = eigenvalues.expand_dims(self.timedim)
 
-        return eigenvalues
-
-    def compute_eigenvalues(self, def_tensor):
-        """
-
-        :rtype: np.array
-        """
-        d_matrix = def_tensor.reshape([2, 2])
-        cauchy_green = np.matmul(d_matrix.T, d_matrix)
-        eigenvalues = self.cg_lambda(np.real(eigvals(cauchy_green.reshape([2, 2]))))
-
-        return eigenvalues
-
-    @staticmethod
-    def compute_determinant(def_tensor):
-        """
-
-        :rtype: np.array
-        """
-        d_matrix = def_tensor.reshape([2, 2])
-        cauchy_green = np.matmul(d_matrix.T, d_matrix)
-        eigenvalues = np.linalg.det(cauchy_green.reshape([2, 2]))
         return eigenvalues
 
 
@@ -198,3 +173,18 @@ def create_arrays_list(ds, groupdim='points'):
     for label, group in ds_groups:
         input_arrays.append(group.values)
     return input_arrays
+
+
+if __name__ == '__main__':
+    import sys
+    import subprocess
+    # Args: timestep, timedim, SETTLS_order, subdomain, ds_path, outpath
+    coords = str(sys.argv[4]).split('/')
+    subdomain = {'longitude': slice(float(coords[0]), float(coords[1])),
+                 'latitude': slice(float(coords[2]), float(coords[3]))}
+    lcs = LCS(timestep=float(sys.argv[1]), timedim=str(sys.argv[2]), SETTLS_order=int(sys.argv[3]),
+              subdomain=subdomain)
+    input_path = str(sys.argv[5])
+    out = lcs(ds = str(sys.argv[5]))
+    out.to_netcdf(sys.argv[6])
+    subprocess.call(['rm', input_path])
