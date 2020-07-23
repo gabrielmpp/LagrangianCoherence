@@ -117,7 +117,6 @@ def parcel_propagation(U: xr.DataArray,
         interpolator_x = RectSphereBivariateSpline(U.latitude.values, U.longitude.values, u_data, s=s)
         ua = interpolator_x.ev(positions_y.ravel(), positions_x.ravel()).reshape(positions_x.shape)
 
-
         positions_y = positions_y + timestep * conversion_y * va
         positions_x = positions_x + timestep * conversion_x.values.T * ua
         # Hard boundary

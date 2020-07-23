@@ -6,16 +6,12 @@ This module provides class (LCS) to compute the Finite-time Lyapunov Exponent fr
 and time).
 """
 
-from scipy.linalg import eigvals
 from dask.diagnostics import ProgressBar
 import xarray as xr
 import numpy as np
-from numba import jit
-import numba
-import pandas as pd
-from typing import List
 from LagrangianCoherence.LCS.trajectory import parcel_propagation
 from xr_tools.tools import latlonsel
+from scipy.linalg import norm
 
 
 class LCS:
@@ -95,7 +91,7 @@ class LCS:
 
         verboseprint("*---- Computing deformation tensor ----*")
 
-        def_tensor = compute_deformation_tensor(x_departure, y_departure)
+        def_tensor = compute_deftensor(x_departure, y_departure)
         if isinstance(self.subdomain, dict):
             def_tensor = latlonsel(def_tensor, **self.subdomain)
         def_tensor = def_tensor.stack({'points': ['latitude', 'longitude']})
@@ -105,61 +101,66 @@ class LCS:
         #                             output_dtypes=[float]
         #                             )
         verboseprint("*---- Computing eigenvalues ----*")
-
-        # def_tensor = def_tensor.chunk({'points': int(def_tensor.points.shape[0]/10)})
-        def_tensor = def_tensor.chunk({'points': 1})
-
-        # -- Observation: Numpy's norm is equivalent to the square-root of the Cauchy-Green strain tensor.
-
-        eigenvalues = xr.apply_ufunc(lambda x: np.array(np.linalg.norm(x.reshape([2, 2]))).reshape([1]),
-                                     def_tensor,
-                                     input_core_dims=[['derivatives']],
-                                     # exclude_dims=set(('derivatives')),
-                                     # output_core_dims=[['derivatives']],
-                                     dask='parallelized',
-                                     output_dtypes=[float])
-
-        with ProgressBar():
-            eigenvalues = eigenvalues.load()
-
+        vals = def_tensor.transpose(..., 'points').values
+        vals = vals.reshape([2, 2, def_tensor.shape[-1]])
+        def_tensor_norm = norm(vals, axis=(0, 1))
+        def_tensor_norm = def_tensor.isel(derivatives=0).drop('derivatives').copy(data=def_tensor_norm)
         verboseprint("*---- Done eigenvalues ----*")
-        eigenvalues = eigenvalues.unstack('points')
+        def_tensor_norm = def_tensor_norm.unstack('points')
         timestamp = u[self.timedim].values[0] if np.sign(timestep) == 1 else u[self.timedim].values[-1]
-        eigenvalues['time'] = timestamp
-        eigenvalues = eigenvalues.expand_dims(self.timedim)
+        def_tensor_norm['time'] = timestamp
+        eigenvalues = def_tensor_norm.expand_dims(self.timedim)
 
         return eigenvalues
 
 
-def compute_deformation_tensor(x_departure: xr.DataArray, y_departure: xr.DataArray) -> xr.DataArray:
+def compute_deftensor(x_departure: xr.DataArray, y_departure: xr.DataArray) -> xr.DataArray:
+
     """
-    :param u: xr.DataArray, array corresponding to the zonal wind field
-    :param v: xr.DataArray, array corresponding to the meridional wind field
-    :param timestep: float
-    :return: the deformation tensor
-    :rtype: xarray.Dataarray
+    Method to compute the deformation tensor
+
+    Parameters
+    ----------
+    x_departure
+    y_departure
+
+    Returns
+    -------
     """
 
-    # u, v, eigengrid = interpolate_c_stagger(u, v)
-    conversion_dydx = xr.apply_ufunc(lambda x: np.cos(x * np.pi / 180), y_departure.latitude)
-    conversion_dxdy = xr.apply_ufunc(lambda x: np.cos(x * np.pi / 180), x_departure.latitude)
 
-    dxdx = x_departure.diff('longitude') / x_departure.longitude.diff('longitude')
-    dxdy = conversion_dxdy * x_departure.diff('latitude') / x_departure.latitude.diff('latitude')
-    dydy = y_departure.diff('latitude') / y_departure.latitude.diff('latitude')
-    dydx = y_departure.diff('longitude') / (y_departure.longitude.diff('longitude') * conversion_dydx)
 
-    dxdx = dxdx.transpose('latitude', 'longitude')
-    dxdy = dxdy.transpose('latitude', 'longitude')
-    dydy = dydy.transpose('latitude', 'longitude')
-    dydx = dydx.transpose('latitude', 'longitude')
+    # --- Conversion from Continuum Mechanics for Engineers: Theory and Problems, X Oliver, C Saracibar
+    # Line element https://en.wikipedia.org/wiki/Spherical_coordinate_system
+    earth_r = 6371000
+    y =  y_departure.latitude.copy()
+    y = y * np.pi / 180  # to rad
+    x = x_departure.longitude.copy() * np.pi / 180
+    X = x_departure.copy() * np.pi/180
+    Y = y_departure.copy() * np.pi/180
 
-    dxdx.name = 'dxdx'
-    dxdy.name = 'dxdy'
-    dydy.name = 'dydy'
-    dydx.name = 'dydx'
+    dX = earth_r * np.cos(Y) * X.diff('longitude')
+    dx = earth_r * np.cos(y) * x.diff('longitude')
 
-    def_tensor = xr.merge([dxdx, dxdy, dydx, dydy])
+    dY = earth_r * Y.diff('latitude')
+    dy = earth_r * y.diff('latitude')
+
+    dXdx = dX/dx
+    dXdy = dX/dy
+    dYdy = dY/dy
+    dYdx = dY/dx
+
+    dXdx = dXdx.transpose('latitude', 'longitude')
+    dXdy = dXdy.transpose('latitude', 'longitude')
+    dYdy = dYdy.transpose('latitude', 'longitude')
+    dYdx = dYdx.transpose('latitude', 'longitude')
+
+    dXdx.name = 'dxdx'
+    dXdy.name = 'dxdy'
+    dYdy.name = 'dydy'
+    dYdx.name = 'dydx'
+
+    def_tensor = xr.merge([dXdx, dXdy, dYdx, dYdy])
     def_tensor = def_tensor.to_array()
     def_tensor = def_tensor.rename({'variable': 'derivatives'})
     def_tensor = def_tensor.transpose('derivatives', 'latitude', 'longitude')
