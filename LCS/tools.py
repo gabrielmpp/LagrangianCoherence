@@ -7,7 +7,7 @@ import pandas as pd
 
 def find_ridges_spherical_hessian(da, sigma=.5, scheme='first_order'):
     """
-    Method to in spherical coordinates
+    Method to in apply a Hessian filter in spherical coordinates
     Parameters
     ----------
     sigma - float, smoothing intensity
@@ -16,6 +16,7 @@ def find_ridges_spherical_hessian(da, sigma=.5, scheme='first_order'):
 
     Returns
     -------
+    Filtered array
 
     """
     da = da.copy()
@@ -29,8 +30,8 @@ def find_ridges_spherical_hessian(da, sigma=.5, scheme='first_order'):
     y = da.latitude.copy() * np.pi/180
     dx = x.diff('longitude') * earth_r * np.cos(y)
     dy = y.diff('latitude') * earth_r
-    dx_scaling = da.longitude.diff('longitude').values[0]  # grid spacing
-    dy_scaling = da.latitude.diff('latitude').values[0]  # grid spacing
+    dx_scaling = 2 * da.longitude.diff('longitude').values[0]  # grid spacing for xr.differentiate
+    dy_scaling = 2 * da.latitude.diff('latitude').values[0]  # grid spacing
     print(1)
     # Calc derivatives
     if scheme == 'second_order':
