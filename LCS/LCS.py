@@ -21,7 +21,7 @@ class LCS:
     earth_r = 6371000  # metres
 
     def __init__(self, timestep: float = 1, timedim='time',
-                 SETTLS_order=0, subdomain=None):
+                 SETTLS_order=0, subdomain=None, return_dpts=False, gauss_sigma=None):
         """
 
         :param timestep: float,
@@ -39,9 +39,10 @@ class LCS:
         self.SETTLS_order = SETTLS_order
         self.timedim = timedim
         self.subdomain = subdomain
-
+        self.gauss_sigma = gauss_sigma
+        self.return_dpts = return_dpts
     def __call__(self, ds: xr.Dataset = None, u: xr.DataArray = None, v: xr.DataArray = None,
-                 verbose=True) -> xr.DataArray:
+                 verbose=True, s=None, resample=None) -> xr.DataArray:
 
         """
 
@@ -77,7 +78,10 @@ class LCS:
             ds = xr.open_dataset(ds)
             u = ds.u.copy()
             v = ds.v.copy()
-
+        if isinstance(resample, str):
+            u = u.resample({self.timedim: resample}).interpolate('linear')
+            v = v.resample({self.timedim: resample}).interpolate('linear')
+            timestep = np.sign(timestep)*(u[self.timedim].values[1] - u[self.timedim].values[0]).astype('timedelta64[s]').astype('float')
         u_dims = u.dims
         v_dims = v.dims
 
@@ -87,11 +91,11 @@ class LCS:
         verboseprint("*---- Parcel propagation ----*")
         x_departure, y_departure = parcel_propagation(u, v, timestep, propdim=self.timedim,
                                                       SETTLS_order=self.SETTLS_order,
-                                                      verbose=verbose)
+                                                      verbose=verbose, s=s)
 
         verboseprint("*---- Computing deformation tensor ----*")
 
-        def_tensor = compute_deftensor(x_departure, y_departure)
+        def_tensor = compute_deftensor(x_departure, y_departure, sigma=self.gauss_sigma)
         if isinstance(self.subdomain, dict):
             def_tensor = latlonsel(def_tensor, **self.subdomain)
         def_tensor = def_tensor.stack({'points': ['latitude', 'longitude']})
@@ -110,11 +114,13 @@ class LCS:
         timestamp = u[self.timedim].values[0] if np.sign(timestep) == 1 else u[self.timedim].values[-1]
         def_tensor_norm['time'] = timestamp
         eigenvalues = def_tensor_norm.expand_dims(self.timedim)
+        if self.return_dpts:
+            return eigenvalues, x_departure, y_departure
+        else:
+            return eigenvalues
 
-        return eigenvalues
 
-
-def compute_deftensor(x_departure: xr.DataArray, y_departure: xr.DataArray) -> xr.DataArray:
+def compute_deftensor(x_departure: xr.DataArray, y_departure: xr.DataArray, sigma=None) -> xr.DataArray:
 
     """
     Method to compute the deformation tensor
@@ -130,6 +136,10 @@ def compute_deftensor(x_departure: xr.DataArray, y_departure: xr.DataArray) -> x
 
 
 
+    if isinstance(sigma, (float, int)):
+        from scipy.ndimage import gaussian_filter
+        x_departure = x_departure.copy(data=gaussian_filter(x_departure, sigma=sigma))
+        y_departure = y_departure.copy(data=gaussian_filter(y_departure, sigma=sigma))
     # --- Conversion from Continuum Mechanics for Engineers: Theory and Problems, X Oliver, C Saracibar
     # Line element https://en.wikipedia.org/wiki/Spherical_coordinate_system
     earth_r = 6371000
@@ -186,6 +196,6 @@ if __name__ == '__main__':
     lcs = LCS(timestep=float(sys.argv[1]), timedim=str(sys.argv[2]), SETTLS_order=int(sys.argv[3]),
               subdomain=subdomain)
     input_path = str(sys.argv[5])
-    out = lcs(ds = str(sys.argv[5]))
+    out = lcs(ds=str(sys.argv[5]), s=1e5, resample='3H')
     out.to_netcdf(sys.argv[6])
     subprocess.call(['rm', input_path])

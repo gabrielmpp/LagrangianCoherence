@@ -50,20 +50,39 @@ def find_ridges_spherical_hessian(da, sigma=.5, scheme='first_order'):
         d2dadydx = d2dadxdy.copy()
     # Assembling Hessian array
     print(2)
+    gradient = xr.concat([ddadx, ddady],
+                            dim=pd.Index(['ddadx', 'ddady'],
+                                         name='elements'))
     hessian = xr.concat([d2dadx2, d2dadxdy, d2dadydx, d2dady2],
                             dim=pd.Index(['d2dadx2', 'd2dadxdy', 'd2dadydx', 'd2dady2'],
                                          name='elements'))
     hessian = hessian.stack({'points': ['latitude', 'longitude']})
-    # hessian = hessian.dropna('points', how='any')
+    gradient = gradient.stack({'points': ['latitude', 'longitude']})
+    hessian = hessian.where(np.abs(hessian) != np.inf, np.nan)
+    hessian = hessian.dropna('points', how='any')
+    gradient = gradient.sel(points=hessian.points)
+    grad_vals = gradient.transpose(..., 'points').values
+    hess_vals = hessian.transpose(..., 'points').values
 
-    # Finding norm
-    print(3)
-    norm = hessian_matrix_eigvals([hessian.sel(elements='d2dadx2').values,
-                                   hessian.sel(elements='d2dadxdy').values,
-                                   hessian.sel(elements='d2dady2').values])
-    norm_max = hessian.isel(elements=0).drop('elements').copy(data=norm[1, :]).unstack()
+    hess_vals = hess_vals.reshape([2, 2, hessian.shape[-1]])
+    val_list = []
+    eigmin_list = []
+    print('Computing hessian eigvectors')
+    for i in range(hess_vals.shape[-1]):
+        print(str(100 * i / hess_vals.shape[-1]) + ' %')
+        eig = np.linalg.eig(hess_vals[:, :, i])
+        eigvector = eig[1][np.argmin(eig[0])]  # eigenvetor of smallest eigenvalue
+        # eigvector = eigvector/np.max(np.abs(eigvector))  # normalizing the eigenvector to recover t hat
+        dt_prod = np.dot(np.flip(eigvector), grad_vals[:, i]/np.max(np.abs(grad_vals[:, i])))
+        val_list.append(dt_prod)
+        eigmin_list.append(np.min(eig[0]))
 
-    return norm_max
+    dt_prod = hessian.isel(elements=0).drop('elements').copy(data=val_list).unstack()
+    eigmin = hessian.isel(elements=0).drop('elements').copy(data=eigmin_list).unstack()
+    dt_prod = dt_prod.where(np.abs(dt_prod) < .1, 0)
+    dt_prod = dt_prod.where(np.abs(dt_prod) == 0, 1)
+
+    return dt_prod, eigmin
 
 
 def latlonsel(array, lat, lon, latname='lat', lonname='lon'):
