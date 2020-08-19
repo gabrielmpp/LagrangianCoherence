@@ -5,7 +5,8 @@ import xarray as xr
 import pandas as pd
 
 
-def find_ridges_spherical_hessian(da, sigma=.5, scheme='first_order'):
+def find_ridges_spherical_hessian(da, sigma=.5, scheme='first_order',
+                                  angle=5):
     """
     Method to in apply a Hessian filter in spherical coordinates
     Parameters
@@ -13,7 +14,7 @@ def find_ridges_spherical_hessian(da, sigma=.5, scheme='first_order'):
     sigma - float, smoothing intensity
     da - xarray.dataarray
     scheme - str, 'first_order' for x[i+1] - x[i] and second order for x[i+1] - x[i-1]
-
+    angle - float in degrees to relax height perpendicularity requirement
     Returns
     -------
     Filtered array
@@ -26,8 +27,8 @@ def find_ridges_spherical_hessian(da, sigma=.5, scheme='first_order'):
 
     # Initializing
     earth_r = 6371000
-    x = da.longitude.copy() * np.pi/180
-    y = da.latitude.copy() * np.pi/180
+    x = da.longitude.copy() * np.pi / 180
+    y = da.latitude.copy() * np.pi / 180
     dx = x.diff('longitude') * earth_r * np.cos(y)
     dy = y.diff('latitude') * earth_r
     dx_scaling = 2 * da.longitude.diff('longitude').values[0]  # grid spacing for xr.differentiate
@@ -51,11 +52,11 @@ def find_ridges_spherical_hessian(da, sigma=.5, scheme='first_order'):
     # Assembling Hessian array
     print(2)
     gradient = xr.concat([ddadx, ddady],
-                            dim=pd.Index(['ddadx', 'ddady'],
-                                         name='elements'))
+                         dim=pd.Index(['ddadx', 'ddady'],
+                                      name='elements'))
     hessian = xr.concat([d2dadx2, d2dadxdy, d2dadydx, d2dady2],
-                            dim=pd.Index(['d2dadx2', 'd2dadxdy', 'd2dadydx', 'd2dady2'],
-                                         name='elements'))
+                        dim=pd.Index(['d2dadx2', 'd2dadxdy', 'd2dadydx', 'd2dady2'],
+                                     name='elements'))
     hessian = hessian.stack({'points': ['latitude', 'longitude']})
     gradient = gradient.stack({'points': ['latitude', 'longitude']})
     hessian = hessian.where(np.abs(hessian) != np.inf, np.nan)
@@ -71,16 +72,20 @@ def find_ridges_spherical_hessian(da, sigma=.5, scheme='first_order'):
     for i in range(hess_vals.shape[-1]):
         print(str(100 * i / hess_vals.shape[-1]) + ' %')
         eig = np.linalg.eig(hess_vals[:, :, i])
-        eigvector = eig[1][np.argmin(eig[0])]  # eigenvetor of smallest eigenvalue
+        eigvector = eig[1][np.argmax(eig[0])]  # eigenvetor of smallest eigenvalue
         # eigvector = eigvector/np.max(np.abs(eigvector))  # normalizing the eigenvector to recover t hat
-        dt_prod = np.dot(np.flip(eigvector), grad_vals[:, i]/np.max(np.abs(grad_vals[:, i])))
-        val_list.append(dt_prod)
-        eigmin_list.append(np.min(eig[0]))
+        dt_angle = np.arccos(np.dot(np.flip(eigvector), grad_vals[:, i]) / (np.linalg.norm(eigvector) *
+                                                                            np.linalg.norm(grad_vals[:, i])))
+        val_list.append(dt_angle)
+        eigmin_list.append(np.sign(np.min(eig[0])))
 
     dt_prod = hessian.isel(elements=0).drop('elements').copy(data=val_list).unstack()
+    dt_prod_ = dt_prod.copy()
     eigmin = hessian.isel(elements=0).drop('elements').copy(data=eigmin_list).unstack()
-    dt_prod = dt_prod.where(np.abs(dt_prod) < .1, 0)
-    dt_prod = dt_prod.where(np.abs(dt_prod) == 0, 1)
+
+    dt_prod = dt_prod.where(np.abs(dt_prod_) <= angle * np.pi / 180, 0)
+    dt_prod = dt_prod.where(np.abs(dt_prod_) > angle * np.pi / 180, 1)
+    dt_prod = dt_prod.where(eigmin == -1, 0)
 
     return dt_prod, eigmin
 
@@ -97,7 +102,6 @@ def latlonsel(array, lat, lon, latname='lat', lonname='lon'):
     """
     assert latname in array.coords, f"Coord. {latname} not present in array"
     assert lonname in array.coords, f"Coord. {lonname} not present in array"
-
 
     if isinstance(lat, slice):
         lat1 = lat.start
