@@ -215,9 +215,9 @@ shear_flow_config = {'lat_min': -40, 'lat_max': 40, 'lon_min': -60, 'lon_max': 2
 subdomain={'latitude': slice(-20, 20), 'longitude': slice(-40, 0)}
 
 
-vortex_config_subtropical = {'lat_min': -30 - 40, 'lat_max': -30+40, 'lon_min': -55 -40,'lon_max': -55+40, 'dx':1,
-                             'dy': 1, 'u_c': .5, 'k': 0, 'diag_factor': 1,
-                         'v_c': .3, 'nt': 30, 'radius': 4, 'max_intensity': 1, 'center': [-55, -30]}
+vortex_config_subtropical = {'lat_min': -30 - 40, 'lat_max': -30+40, 'lon_min': -55 -40,'lon_max': -55+40, 'dx': .6,
+                             'dy': .6, 'u_c': .3, 'k': 0, 'diag_factor': 1,
+                         'v_c': -.3, 'nt': 30, 'radius': 2, 'max_intensity': 2, 'center': [-55, -20]}
 subdomain = {
     'latitude': slice(-20, 20),
     'longitude': slice(-60, -20),
@@ -258,7 +258,7 @@ ds = xr.merge([u, v])
 x_dye, y_dye = trajectory.parcel_propagation(ds.u, ds.v,
                                      timestep=-6 * 3600,
                                      propdim='time',
-                                     SETTLS_order=5,
+                                     SETTLS_order=2,
                                      copy=True,
                                      s=None,
                                      # C=wv,
@@ -267,18 +267,18 @@ x_dye, y_dye = trajectory.parcel_propagation(ds.u, ds.v,
 x, y = trajectory.parcel_propagation(ds.u, ds.v,
                                      timestep=6 * 3600,
                                      propdim='time',
-                                     SETTLS_order=5,
+                                     SETTLS_order=2,
                                      copy=True,
                                      s=None,
                                      # C=wv,
                                      # Srcs=evap,
                                      return_traj=True)
-rcs = LCS.LCS(lcs_type='repelling', timestep=6 * 3600, timedim='time', SETTLS_order=5 )
+rcs = LCS.LCS(timestep=6 * 3600, timedim='time', SETTLS_order=2 )
 ftle_r = rcs(ds.copy())
 ftle_r = np.log(np.sqrt(ftle_r)) / vortex_config['nt']
-acs = LCS.LCS(lcs_type='repelling', timestep=-6 * 3600, timedim='time', SETTLS_order=5, )
+acs = LCS.LCS(timestep=-6 * 3600, timedim='time', SETTLS_order=2, )
 ftle_a = acs(ds.copy())
-ftle_a = np.log(np.sqrt(ftle_a)) / vortex_config['nt']
+ftle_a = np.log(ftle_a) / vortex_config['nt']
 
 
 # ---- Plots ---- #
@@ -301,8 +301,8 @@ plt.close()
 
 fig, axs = plt.subplots(1, 3, subplot_kw={
     'projection': ccrs.Orthographic(central_longitude=vortex_config['center'][0])}, figsize=[28, 8])
-ftle_a.isel(time=0).plot.contourf(levels=30, cmap=cmr.freeze, ax=axs[0], transform=ccrs.PlateCarree(), vmin=0)
-ftle_r.isel(time=0).plot.contourf(levels=30, cmap=cmr.flamingo, ax=axs[1], transform=ccrs.PlateCarree(), vmin=0)
+ftle_a.where(ftle_a > 0.04).isel(time=0).plot(cmap=cmr.freeze, ax=axs[0], transform=ccrs.PlateCarree(), vmin=0.04)
+ftle_r.isel(time=0).plot(cmap=cmr.flamingo, ax=axs[1], transform=ccrs.PlateCarree(), vmin=0)
 (ftle_a.isel(time=0) - ftle_r.isel(time=0)).plot.contourf(levels=30, cmap=cmr.redshift_r, ax=axs[2], transform=ccrs.PlateCarree())
 axs[0].set_title('Attracting FTLE')
 axs[1].set_title('Repelling FTLE')
@@ -310,7 +310,7 @@ axs[2].set_title('Attracting - Repelling FTLE')
 axs[0].coastlines(color='white')
 axs[1].coastlines(color='white')
 axs[2].coastlines(color='white')
-plt.savefig(f'figs/FTLE_{vortex_type}.png')
+plt.savefig(f'figs/FTLE_{vortex_type}.pdf')
 plt.close()
 
 

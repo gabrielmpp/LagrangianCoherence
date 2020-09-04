@@ -74,6 +74,7 @@ def find_ridges_spherical_hessian(da, sigma=.5, scheme='first_order',
         eig = np.linalg.eig(hess_vals[:, :, i])
         eigvector = eig[1][np.argmax(eig[0])]  # eigenvetor of smallest eigenvalue
         # eigvector = eigvector/np.max(np.abs(eigvector))  # normalizing the eigenvector to recover t hat
+
         dt_angle = np.arccos(np.dot(np.flip(eigvector), grad_vals[:, i]) / (np.linalg.norm(eigvector) *
                                                                             np.linalg.norm(grad_vals[:, i])))
         val_list.append(dt_angle)
