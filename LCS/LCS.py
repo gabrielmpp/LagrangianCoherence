@@ -88,6 +88,14 @@ class LCS:
         assert set(u_dims) == set(v_dims), "u and v dims are different"
         assert set(u_dims) == {'latitude', 'longitude', timedim}, 'array dims should be latitude and longitude only'
 
+        #  Ascending order is required
+        #  TODO: Add checks for continuity
+
+        u = u.sortby('latitude')
+        u = u.sortby('longitude')
+        v = v.sortby('latitude')
+        v = v.sortby('longitude')
+
         verboseprint("*---- Parcel propagation ----*")
         x_departure, y_departure = parcel_propagation(u, v, timestep, propdim=self.timedim,
                                                       SETTLS_order=self.SETTLS_order,

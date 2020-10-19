@@ -6,7 +6,7 @@ import pandas as pd
 
 
 def find_ridges_spherical_hessian(da, sigma=.5, scheme='first_order',
-                                  angle=5):
+                                  angle=5, ds_wind=None):
     """
     Method to in apply a Hessian filter in spherical coordinates
     Parameters
@@ -51,6 +51,7 @@ def find_ridges_spherical_hessian(da, sigma=.5, scheme='first_order',
         d2dadydx = d2dadxdy.copy()
     # Assembling Hessian array
     print(2)
+    shear = ds_wind.u.diff('latitude') + ds_wind.v.diff('longitude')
     gradient = xr.concat([ddadx, ddady],
                          dim=pd.Index(['ddadx', 'ddady'],
                                       name='elements'))
@@ -68,17 +69,24 @@ def find_ridges_spherical_hessian(da, sigma=.5, scheme='first_order',
     hess_vals = hess_vals.reshape([2, 2, hessian.shape[-1]])
     val_list = []
     eigmin_list = []
+    eigvector_list = []
     print('Computing hessian eigvectors')
     for i in range(hess_vals.shape[-1]):
         print(str(100 * i / hess_vals.shape[-1]) + ' %')
         eig = np.linalg.eig(hess_vals[:, :, i])
-        eigvector = eig[1][np.argmax(eig[0])]  # eigenvetor of smallest eigenvalue
+        eigvector = eig[1][np.argmax(eig[0])]
+
+        # eigenvetor of smallest eigenvalue
         # eigvector = eigvector/np.max(np.abs(eigvector))  # normalizing the eigenvector to recover t hat
 
         dt_angle = np.arccos(np.dot(np.flip(eigvector), grad_vals[:, i]) / (np.linalg.norm(eigvector) *
                                                                             np.linalg.norm(grad_vals[:, i])))
         val_list.append(dt_angle)
         eigmin_list.append(np.sign(np.min(eig[0])))
+        eigvector_list.append(eigvector)
+
+
+    eigvectors=hessian.isel(elements=[1, 2]).copy(data=np.array(eigvector_list).T).rename(elements='eigvectors').unstack()
 
     dt_prod = hessian.isel(elements=0).drop('elements').copy(data=val_list).unstack()
     dt_prod_ = dt_prod.copy()
@@ -88,6 +96,13 @@ def find_ridges_spherical_hessian(da, sigma=.5, scheme='first_order',
     dt_prod = dt_prod.where(np.abs(dt_prod_) > angle * np.pi / 180, 1)
     dt_prod = dt_prod.where(eigmin == -1, 0)
 
+    # shear = shear.where(dt_prod == 1)
+    # rd = np.sqrt(np.abs(shear) * 86400 / da)
+    # rd.plot(robust=True)
+    # plt.show()
+    # rd.plot.hist()
+    # plt.show()
+    # plt.log(True)
     return dt_prod, eigmin
 
 

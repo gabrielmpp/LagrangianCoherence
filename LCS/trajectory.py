@@ -65,7 +65,7 @@ def parcel_propagation(U: xr.DataArray,
         C = C.sortby('longitude')
         C = C.sortby('latitude')
         tracer_account = True
-        rel_contribution_list = []
+        tracer_list = []
 
     if isinstance(Srcs, type(None)):
         Srcs = U.copy(data=np.zeros(shape=U.shape))
@@ -85,7 +85,10 @@ def parcel_propagation(U: xr.DataArray,
 
     if timestep < 0:
         times.reverse()  # inplace
-
+        times = [times[0] - timestep] + times
+    else:
+        # times = times + [times[-1] + timestep]
+        times = [times[0] - timestep] + times
     # initializing and integrating
     y_min = U.latitude.values.min()
     y_max = U.latitude.values.max()
@@ -101,8 +104,11 @@ def parcel_propagation(U: xr.DataArray,
     pos_list_y = []
     # pos_list_x.append(positions_x)  # appending t=0
     # pos_list_y.append(positions_y)
-
-    for time in times:
+    pos_list_x.append(positions_x)
+    pos_list_y.append(positions_y)
+    if tracer_account:
+        tracer_list.append(C.sel({propdim: times[0]}, method='nearest').values.T) #  TODO WARNING: temporarily using nearest
+    for time in times[1:]:
         verboseprint(f'Propagating time {time}')
         v_data = V.sel({propdim: time}).values
 
@@ -166,22 +172,18 @@ def parcel_propagation(U: xr.DataArray,
         pos_list_y.append(positions_y)
 
         if tracer_account:
+            c_data = C.sel({propdim: time}, method='nearest').values  # TODO WARNING
 
-            srcs = Srcs.sel({propdim: time}).interp(latitude=positions_y.ravel(), longitude=positions_x.ravel(),
-                                                    method='linear')
-            c = C.sel({propdim: time}).interp(latitude=positions_y.ravel(), longitude=positions_x.ravel(),
-                                                    method='linear')
-            srcs = srcs.sortby('longitude')
-            srcs = srcs.sortby('latitude')
-            c = c.sortby('longitude')
-            c = c.sortby('latitude')
-            srcs = 1 - np.exp(-srcs/c)
-            rel_contribution_list.append(srcs)
+            interpolator_c = RectSphereBivariateSpline(V.latitude.values, V.longitude.values, c_data, s=s)
+            c = interpolator_c.ev(positions_y.ravel(), positions_x.ravel()).reshape(positions_x.shape)
+            tracer_list.append(c)
 
     U = U.assign_coords(latitude= U.latitude.values * 180 / np.pi + latmin,
                             longitude = U.longitude.values * 180 / np.pi + lonmin)
     V = V.assign_coords(latitude= V.latitude.values * 180 / np.pi + latmin,
                         longitude = V.longitude.values * 180 / np.pi + lonmin)
+    C = C.assign_coords(latitude= C.latitude.values * 180 / np.pi + latmin,
+                        longitude = C.longitude.values * 180 / np.pi + lonmin)
     for i in range(len(pos_list_x)):
         pos_list_x[i] = pos_list_x[i] * 180 / np.pi + lonmin
         pos_list_y[i] = pos_list_y[i] * 180 / np.pi + latmin
@@ -189,15 +191,25 @@ def parcel_propagation(U: xr.DataArray,
                                      coords=[U.latitude.values.copy(), U.longitude.values.copy()])
         pos_list_y[i] = xr.DataArray(pos_list_y[i].T, dims=['latitude', 'longitude'],
                                      coords=[U.latitude.values.copy(), U.longitude.values.copy()])
+        if tracer_account:
+            print(tracer_list[i].shape)
+            tracer_list[i] = xr.DataArray(tracer_list[i].T, dims=['latitude', 'longitude'],
+                                         coords=[C.latitude.values.copy(), C.longitude.values.copy()])
     # time_list = U[propdim].values.tolist()
     # time_list.append(pd.Timestamp(pd.Timestamp(U[propdim].values[-1]) + pd.Timedelta(str(timestep)+'s')))
     positions_x = xr.concat(pos_list_x, dim=pd.Index(pd.to_datetime(times), name=propdim))
     positions_y = xr.concat(pos_list_y, dim=pd.Index(pd.to_datetime(times), name=propdim))
+    if tracer_account:
+        tracer = xr.concat(tracer_list, dim=pd.Index(pd.to_datetime(times), name=propdim))
+
     if not return_traj:
         positions_x = positions_x.isel({propdim: -1})
         positions_y = positions_y.isel({propdim: -1})
+    if tracer_account:
+        return positions_x, positions_y, tracer
+    else:
+        return positions_x, positions_y
 
-    return positions_x, positions_y
 
 
 if __name__ == '__main__':
