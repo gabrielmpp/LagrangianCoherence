@@ -6,7 +6,7 @@ import pandas as pd
 
 
 def find_ridges_spherical_hessian(da, sigma=.5, scheme='first_order',
-                                  angle=5, ds_wind=None):
+                                  angle=5, return_eigvectors=False):
     """
     Method to in apply a Hessian filter in spherical coordinates
     Parameters
@@ -51,7 +51,6 @@ def find_ridges_spherical_hessian(da, sigma=.5, scheme='first_order',
         d2dadydx = d2dadxdy.copy()
     # Assembling Hessian array
     print(2)
-    shear = ds_wind.u.diff('latitude') + ds_wind.v.diff('longitude')
     gradient = xr.concat([ddadx, ddady],
                          dim=pd.Index(['ddadx', 'ddady'],
                                       name='elements'))
@@ -60,7 +59,8 @@ def find_ridges_spherical_hessian(da, sigma=.5, scheme='first_order',
                                      name='elements'))
     hessian = hessian.stack({'points': ['latitude', 'longitude']})
     gradient = gradient.stack({'points': ['latitude', 'longitude']})
-    hessian = hessian.where(np.abs(hessian) != np.inf, np.nan)
+    hessian = hessian.where(np.abs(hessian) != np.inf, 0)
+    hessian = hessian.where(~xr.ufuncs.isnan(hessian), 0)
     hessian = hessian.dropna('points', how='any')
     gradient = gradient.sel(points=hessian.points)
     grad_vals = gradient.transpose(..., 'points').values
@@ -70,11 +70,13 @@ def find_ridges_spherical_hessian(da, sigma=.5, scheme='first_order',
     val_list = []
     eigmin_list = []
     eigvector_list = []
+    eigvector_min_list = []
     print('Computing hessian eigvectors')
     for i in range(hess_vals.shape[-1]):
         print(str(100 * i / hess_vals.shape[-1]) + ' %')
         eig = np.linalg.eig(hess_vals[:, :, i])
         eigvector = eig[1][np.argmax(eig[0])]
+        eigvector_min = eig[1][np.argmin(eig[0])]
 
         # eigenvetor of smallest eigenvalue
         # eigvector = eigvector/np.max(np.abs(eigvector))  # normalizing the eigenvector to recover t hat
@@ -82,11 +84,13 @@ def find_ridges_spherical_hessian(da, sigma=.5, scheme='first_order',
         dt_angle = np.arccos(np.dot(np.flip(eigvector), grad_vals[:, i]) / (np.linalg.norm(eigvector) *
                                                                             np.linalg.norm(grad_vals[:, i])))
         val_list.append(dt_angle)
-        eigmin_list.append(np.sign(np.min(eig[0])))
+        eigmin_list.append(np.min(eig[0]))
         eigvector_list.append(eigvector)
+        eigvector_min_list.append(eigvector_min)
 
 
     eigvectors=hessian.isel(elements=[1, 2]).copy(data=np.array(eigvector_list).T).rename(elements='eigvectors').unstack()
+    eigvectors_min=hessian.isel(elements=[1, 2]).copy(data=np.array(eigvector_min_list).T).rename(elements='eigvectors').unstack()
 
     dt_prod = hessian.isel(elements=0).drop('elements').copy(data=val_list).unstack()
     dt_prod_ = dt_prod.copy()
@@ -94,7 +98,7 @@ def find_ridges_spherical_hessian(da, sigma=.5, scheme='first_order',
 
     dt_prod = dt_prod.where(np.abs(dt_prod_) <= angle * np.pi / 180, 0)
     dt_prod = dt_prod.where(np.abs(dt_prod_) > angle * np.pi / 180, 1)
-    dt_prod = dt_prod.where(eigmin == -1, 0)
+    dt_prod = dt_prod.where(np.sign(eigmin) == -1, 0)
 
     # shear = shear.where(dt_prod == 1)
     # rd = np.sqrt(np.abs(shear) * 86400 / da)
@@ -103,7 +107,10 @@ def find_ridges_spherical_hessian(da, sigma=.5, scheme='first_order',
     # rd.plot.hist()
     # plt.show()
     # plt.log(True)
-    return dt_prod, eigmin
+    if return_eigvectors:
+        return dt_prod, eigmin, eigvectors
+    else:
+        return dt_prod, eigmin
 
 
 def latlonsel(array, lat, lon, latname='lat', lonname='lon'):

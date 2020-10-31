@@ -115,7 +115,7 @@ class LCS:
         verboseprint("*---- Computing eigenvalues ----*")
         vals = def_tensor.transpose(..., 'points').values
         vals = vals.reshape([2, 2, def_tensor.shape[-1]])
-        def_tensor_norm = norm(vals, axis=(0, 1))
+        def_tensor_norm = norm(vals, axis=(0, 1), ord=2)
         def_tensor_norm = def_tensor.isel(derivatives=0).drop('derivatives').copy(data=def_tensor_norm)
         verboseprint("*---- Done eigenvalues ----*")
         def_tensor_norm = def_tensor_norm.unstack('points')
