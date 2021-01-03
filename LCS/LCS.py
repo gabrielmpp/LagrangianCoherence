@@ -42,7 +42,7 @@ class LCS:
         self.gauss_sigma = gauss_sigma
         self.return_dpts = return_dpts
     def __call__(self, ds: xr.Dataset = None, u: xr.DataArray = None, v: xr.DataArray = None,
-                 verbose=True, s=None, resample=None) -> xr.DataArray:
+                 verbose=True, s=None, resample=None, s_is_error=False) -> xr.DataArray:
 
         """
 
@@ -99,7 +99,7 @@ class LCS:
         verboseprint("*---- Parcel propagation ----*")
         x_departure, y_departure = parcel_propagation(u, v, timestep, propdim=self.timedim,
                                                       SETTLS_order=self.SETTLS_order,
-                                                      verbose=verbose, s=s)
+                                                      verbose=verbose, s=s, s_is_error=s_is_error)
 
         verboseprint("*---- Computing deformation tensor ----*")
 
@@ -198,12 +198,15 @@ if __name__ == '__main__':
     import sys
     import subprocess
     # Args: timestep, timedim, SETTLS_order, subdomain, ds_path, outpath
+    print('*----- ARGS ------*')
+    print(sys.argv)
     coords = str(sys.argv[4]).split('/')
     subdomain = {'longitude': slice(float(coords[0]), float(coords[1])),
                  'latitude': slice(float(coords[2]), float(coords[3]))}
     lcs = LCS(timestep=float(sys.argv[1]), timedim=str(sys.argv[2]), SETTLS_order=int(sys.argv[3]),
               subdomain=subdomain)
     input_path = str(sys.argv[5])
-    out = lcs(ds=str(sys.argv[5]), s=1e5, resample='3H')
+    out = lcs(ds=str(sys.argv[5]), s=1.5e6)
+    print('Savin to ' + str(sys.argv[6]))
     out.to_netcdf(sys.argv[6])
     subprocess.call(['rm', input_path])

@@ -3,10 +3,11 @@ from skimage.feature import hessian_matrix_eigvals
 from scipy.ndimage import gaussian_filter
 import xarray as xr
 import pandas as pd
-
+import matplotlib.pyplot as plt
+from copy import deepcopy
 
 def find_ridges_spherical_hessian(da, sigma=.5, scheme='first_order',
-                                  angle=5, return_eigvectors=False):
+                                  tolerance_threshold=0.0005e-3, return_eigvectors=False):
     """
     Method to in apply a Hessian filter in spherical coordinates
     Parameters
@@ -14,13 +15,18 @@ def find_ridges_spherical_hessian(da, sigma=.5, scheme='first_order',
     sigma - float, smoothing intensity
     da - xarray.dataarray
     scheme - str, 'first_order' for x[i+1] - x[i] and second order for x[i+1] - x[i-1]
-    angle - float in degrees to relax height perpendicularity requirement
+    tolerance_threshold - tolerance for the FTLE gradient across the ridge
     Returns
     -------
     Filtered array
 
     """
     da = da.copy()
+    original_dim_order = deepcopy(da.dims)
+    da = da.transpose('longitude', 'latitude', ...)
+    da = da.sortby('latitude')
+    da = da.sortby('longitude')
+
     # Gaussian filter
     if isinstance(sigma, (float, int)):
         da = da.copy(data=gaussian_filter(da, sigma=sigma))
@@ -33,7 +39,6 @@ def find_ridges_spherical_hessian(da, sigma=.5, scheme='first_order',
     dy = y.diff('latitude') * earth_r
     dx_scaling = 2 * da.longitude.diff('longitude').values[0]  # grid spacing for xr.differentiate
     dy_scaling = 2 * da.latitude.diff('latitude').values[0]  # grid spacing
-    print(1)
     # Calc derivatives
     if scheme == 'second_order':
         ddadx = dx_scaling * da.differentiate('longitude') / dx
@@ -50,15 +55,14 @@ def find_ridges_spherical_hessian(da, sigma=.5, scheme='first_order',
         d2dady2 = ddady.diff('latitude') / dy
         d2dadydx = d2dadxdy.copy()
     # Assembling Hessian array
-    print(2)
     gradient = xr.concat([ddadx, ddady],
                          dim=pd.Index(['ddadx', 'ddady'],
                                       name='elements'))
     hessian = xr.concat([d2dadx2, d2dadxdy, d2dadydx, d2dady2],
                         dim=pd.Index(['d2dadx2', 'd2dadxdy', 'd2dadydx', 'd2dady2'],
                                      name='elements'))
-    hessian = hessian.stack({'points': ['latitude', 'longitude']})
-    gradient = gradient.stack({'points': ['latitude', 'longitude']})
+    hessian = hessian.stack({'points': ['longitude', 'latitude']})
+    gradient = gradient.stack({'points': ['longitude', 'latitude']})
     hessian = hessian.where(np.abs(hessian) != np.inf, 0)
     hessian = hessian.where(~xr.ufuncs.isnan(hessian), 0)
     hessian = hessian.dropna('points', how='any')
@@ -71,35 +75,39 @@ def find_ridges_spherical_hessian(da, sigma=.5, scheme='first_order',
     eigmin_list = []
     eigvector_list = []
     eigvector_min_list = []
-    print('Computing hessian eigvectors')
     for i in range(hess_vals.shape[-1]):
-        print(str(100 * i / hess_vals.shape[-1]) + ' %')
+        # print(str(100 * i / hess_vals.shape[-1]) + ' %')
         eig = np.linalg.eig(hess_vals[:, :, i])
-        eigvector = eig[1][np.argmax(eig[0])]
-        eigvector_min = eig[1][np.argmin(eig[0])]
+        eigvector = eig[1][np.argmin(eig[0])]
+        # eigvector = eig[1][np.argmin(eig[0])]
+
+        eigvector_min = eig[1][np.argmin(np.abs(eig[0]))]
 
         # eigenvetor of smallest eigenvalue
         # eigvector = eigvector/np.max(np.abs(eigvector))  # normalizing the eigenvector to recover t hat
 
-        dt_angle = np.arccos(np.dot(np.flip(eigvector), grad_vals[:, i]) / (np.linalg.norm(eigvector) *
-                                                                            np.linalg.norm(grad_vals[:, i])))
+        dt_angle = np.dot(eigvector, grad_vals[:, i]) #/ (np.linalg.norm(eigvector) *
+                                                        #                    np.linalg.norm(grad_vals[:, i]))
+        # dt_angle = .5*np.pi - np.arccos(np.abs(dt_angle))
         val_list.append(dt_angle)
-        eigmin_list.append(np.min(eig[0]))
+        eigmin_list.append(eig[0][np.argmax(np.abs(eig[0]))])
         eigvector_list.append(eigvector)
         eigvector_min_list.append(eigvector_min)
 
 
     eigvectors=hessian.isel(elements=[1, 2]).copy(data=np.array(eigvector_list).T).rename(elements='eigvectors').unstack()
-    eigvectors_min=hessian.isel(elements=[1, 2]).copy(data=np.array(eigvector_min_list).T).rename(elements='eigvectors').unstack()
+    angle = 180/np.pi*np.arctan(eigvectors.isel(eigvectors=0) / eigvectors.isel(eigvectors=1)).T
 
+    eigvectors_min=hessian.isel(elements=[1, 2]).copy(data=np.array(eigvector_min_list).T).rename(elements='eigvectors').unstack()
     dt_prod = hessian.isel(elements=0).drop('elements').copy(data=val_list).unstack()
     dt_prod_ = dt_prod.copy()
     eigmin = hessian.isel(elements=0).drop('elements').copy(data=eigmin_list).unstack()
+    eigvectors = eigvectors.where(eigmin < 0, 0)
 
-    dt_prod = dt_prod.where(np.abs(dt_prod_) <= angle * np.pi / 180, 0)
-    dt_prod = dt_prod.where(np.abs(dt_prod_) > angle * np.pi / 180, 1)
+    dt_prod = dt_prod.where(np.abs(dt_prod_) <= tolerance_threshold, 0)
+    dt_prod = dt_prod.where(np.abs(dt_prod_) > tolerance_threshold, 1)
     dt_prod = dt_prod.where(np.sign(eigmin) == -1, 0)
-
+    angle = angle*dt_prod.where(dt_prod > 0)
     # shear = shear.where(dt_prod == 1)
     # rd = np.sqrt(np.abs(shear) * 86400 / da)
     # rd.plot(robust=True)
@@ -108,9 +116,11 @@ def find_ridges_spherical_hessian(da, sigma=.5, scheme='first_order',
     # plt.show()
     # plt.log(True)
     if return_eigvectors:
-        return dt_prod, eigmin, eigvectors
+        return dt_prod.unstack().transpose(..., *original_dim_order), eigmin.unstack().transpose(..., *original_dim_order), \
+               eigvectors.unstack().transpose(..., *original_dim_order), gradient.unstack().transpose(..., *original_dim_order), \
+               angle.transpose(..., *original_dim_order)
     else:
-        return dt_prod, eigmin
+        return dt_prod.unstack().transpose(..., *original_dim_order), eigmin.unstack().transpose(..., *original_dim_order),
 
 
 def latlonsel(array, lat, lon, latname='lat', lonname='lon'):

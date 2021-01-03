@@ -15,7 +15,8 @@ def parcel_propagation(U: xr.DataArray,
                        SETTLS_order=0,
                        copy=False,
                        C=None,
-                       Srcs=None):
+                       Srcs=None,
+                       s_is_error=False):
     """
     Lagrangian 2-time-level advection scheme
 
@@ -31,6 +32,7 @@ def parcel_propagation(U: xr.DataArray,
         Array correponding to the meridional wind
     :param s: float,
         smoothing factor for the spline spherical interpolation, default is 1e5
+        or data error used for estimating the smoothing factor internally
     :return: tuple,
         zonal and meridional arrays corresponding to the final positions of the trajectories
 
@@ -50,7 +52,8 @@ def parcel_propagation(U: xr.DataArray,
                         longitude=(U.longitude.values - lonmin) * np.pi / 180)
     V = V.assign_coords(latitude=(V.latitude.values - latmin) * np.pi / 180,
                         longitude=(V.longitude.values - lonmin) * np.pi / 180)
-
+    if s_is_error:
+        s = (s ** 2) * U.isel({propdim: 0}).size ** 2
 
     U = U.sortby('longitude')
     V = V.sortby('longitude')
