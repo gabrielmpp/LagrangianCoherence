@@ -16,7 +16,9 @@ def parcel_propagation(U: xr.DataArray,
                        copy=False,
                        C=None,
                        Srcs=None,
-                       s_is_error=False):
+                       s_is_error=False,
+                       cyclic_xboundary=False,
+                       pole_continuity=True):
     """
     Lagrangian 2-time-level advection scheme
 
@@ -46,8 +48,8 @@ def parcel_propagation(U: xr.DataArray,
     tracer_account = False
 
     verboseprint = print if verbose else lambda *a, **k: None
-    latmin = deepcopy(U.latitude.min().values) - np.abs(U.latitude.diff('latitude').values[0]) # offset so that the interp works
-    lonmin = deepcopy(U.longitude.min().values) - np.abs(U.longitude.diff('longitude').values[0])
+    latmin=-90
+    lonmin=-180
     U = U.assign_coords(latitude=(U.latitude.values - latmin) * np.pi / 180,
                         longitude=(U.longitude.values - lonmin) * np.pi / 180)
     V = V.assign_coords(latitude=(V.latitude.values - latmin) * np.pi / 180,
@@ -98,10 +100,9 @@ def parcel_propagation(U: xr.DataArray,
     x_min = U.longitude.values.min()
     x_max = U.longitude.values.max()
 
-    positions_y, positions_x = np.meshgrid(U.latitude.values, U.longitude.values)
-    positions_x_t0 = positions_x.copy()
-    positions_y_t0 = positions_y.copy()
-
+    positions_y_t0 = U.latitude.values
+    positions_x_t0 = U.longitude.values
+    positions_y, positions_x = np.meshgrid(positions_y_t0, positions_x_t0)
     # positions_y
     pos_list_x = []
     pos_list_y = []
@@ -115,7 +116,7 @@ def parcel_propagation(U: xr.DataArray,
         verboseprint(f'Propagating time {time}')
         v_data = V.sel({propdim: time}).values
 
-        interpolator_y = RectSphereBivariateSpline(V.latitude.values, V.longitude.values, v_data, s=s)
+        interpolator_y = RectSphereBivariateSpline(positions_y_t0, positions_x_t0, v_data, s=s, pole_continuity=pole_continuity)
         va = interpolator_y.ev(positions_y.ravel(), positions_x.ravel()).reshape(positions_y.shape)
         # va = griddata((positions_y.ravel(), positions_x.ravel()), v_data.ravel(),
         #               (positions_y.ravel(), positions_x.ravel()), method=method, rescale=True)
@@ -123,19 +124,21 @@ def parcel_propagation(U: xr.DataArray,
 
 
         u_data = U.sel({propdim: time}).values
-        interpolator_x = RectSphereBivariateSpline(U.latitude.values, U.longitude.values, u_data, s=s)
+        interpolator_x = RectSphereBivariateSpline(positions_y_t0, positions_x_t0, u_data, s=s, pole_continuity=pole_continuity)
         ua = interpolator_x.ev(positions_y.ravel(), positions_x.ravel()).reshape(positions_x.shape)
 
         positions_y = positions_y + timestep * conversion_y * va
         positions_x = positions_x + timestep * conversion_x.values.T * ua
-        # Hard boundary
+        # Hard y boundary
         positions_y[np.where(positions_y < y_min)] = y_min
         positions_y[np.where(positions_y > y_max)] = y_max
 
-        # Hard boundary
-        positions_x[np.where(positions_x < x_min)] = x_min
-        positions_x[np.where(positions_x > x_max)] = x_max
-
+        if cyclic_xboundary:
+            positions_x[np.where(positions_x < 0)] = positions_x[np.where(positions_x < 0)] % (2 * np.pi)
+            positions_x[np.where(positions_x > 2 * np.pi)] = positions_x[np.where(positions_x > 2 * np.pi)] % (2 * np.pi)
+        else:
+            positions_x[np.where(positions_x < x_min)] = x_min
+            positions_x[np.where(positions_x > x_max)] =  x_max
         # ECMWF's SETTLS algorithm for second-order advection accuracy (Hortal; 2002)
         k = 0
         while k < SETTLS_order:
@@ -143,19 +146,19 @@ def parcel_propagation(U: xr.DataArray,
 
             # ---- propagating positions ---- #
             v_t_depts = V.sel({propdim: time}).values
-            interpolator = RectSphereBivariateSpline(V.latitude.values, V.longitude.values, v_t_depts, s=s)
+            interpolator = RectSphereBivariateSpline(positions_y_t0, positions_x_t0, v_t_depts, s=s, pole_continuity=pole_continuity)
             v_t_depts = interpolator.ev(positions_y.ravel(), positions_x.ravel()).reshape(positions_y.shape)
 
             v_tprevious_depts = V.sel({propdim: time + timestep}, method='nearest').values
-            interpolator = RectSphereBivariateSpline(V.latitude.values, V.longitude.values, v_tprevious_depts, s=s)
+            interpolator = RectSphereBivariateSpline(positions_y_t0, positions_x_t0, v_tprevious_depts, s=s, pole_continuity=pole_continuity)
             v_tprevious_depts = interpolator.ev(positions_y.ravel(), positions_x.ravel()).reshape(positions_y.shape)
 
             u_t_depts = U.sel({propdim: time}).values
-            interpolator = RectSphereBivariateSpline(U.latitude.values, U.longitude.values, u_t_depts, s=s)
+            interpolator = RectSphereBivariateSpline(positions_y_t0, positions_x_t0, u_t_depts, s=s, pole_continuity=pole_continuity)
             u_t_depts = interpolator.ev(positions_y.ravel(), positions_x.ravel()).reshape(positions_x.shape)
 
             u_tprevious_depts = U.sel({propdim: time + timestep}, method='nearest').values
-            interpolator = RectSphereBivariateSpline(U.latitude.values, U.longitude.values, u_tprevious_depts, s=s)
+            interpolator = RectSphereBivariateSpline(positions_y_t0, positions_x_t0, u_tprevious_depts, s=s, pole_continuity=pole_continuity)
             u_tprevious_depts = interpolator.ev(positions_y.ravel(), positions_x.ravel()).reshape(positions_y.shape)
 
             positions_y = positions_y + 0.5 * timestep * conversion_y * (va + 2*v_t_depts - v_tprevious_depts)
@@ -166,10 +169,12 @@ def parcel_propagation(U: xr.DataArray,
             positions_y[np.where(positions_y < y_min)] = y_min
             positions_y[np.where(positions_y > y_max)] = y_max
 
-            # Hard boundary
-            positions_x[np.where(positions_x < x_min)] = x_min
-            positions_x[np.where(positions_x > x_max)] = x_max
-
+            if cyclic_xboundary:
+                positions_x[np.where(positions_x < 0)] = positions_x[np.where(positions_x < 0)] % (2 * np.pi)
+                positions_x[np.where(positions_x > 2 * np.pi)] = positions_x[np.where(positions_x > 2 * np.pi)] % (2 * np.pi)
+            else:
+                positions_x[np.where(positions_x < x_min)] = x_min
+                positions_x[np.where(positions_x > x_max)] = x_max
             k += 1
         pos_list_x.append(positions_x)
         pos_list_y.append(positions_y)
@@ -218,28 +223,70 @@ def parcel_propagation(U: xr.DataArray,
 if __name__ == '__main__':
     import matplotlib.pyplot as plt
     from xr_tools.tools import latlonsel
-
-    data_dir = '/media/gab/gab_hd/data/'
+    import cartopy.crs as ccrs
+    import cmasher as cmr
+    data_dir = '/media/gab/gab_hd2/data/'
     sel_slice = dict(
-        lat=slice(-70, 15),
-        lon=slice(-140, 20)
+        latitude=slice(-70, 15),
+        longitude=slice(-140, 20)
 
     )
     level=850
-    W = xr.open_dataarray(data_dir + 'w_ERA5_6hr_2000010100-2000123118.nc').isel(time=slice(None, 6))
-    U = xr.open_dataarray(data_dir + 'u_ERA5_6hr_2000010100-2000123118.nc').isel(time=slice(None,6))
-    V = xr.open_dataarray(data_dir + 'v_ERA5_6hr_2000010100-2000123118.nc').isel(time=slice(None, 6))
+    W = xr.open_dataarray(data_dir + 'w_ERA5_6hr_2000010100-2000123118.nc').isel(time=slice(None, 8))
+    U = xr.open_dataarray(data_dir + 'u_ERA5_6hr_2000010100-2000123118.nc').isel(time=slice(None,8))
+    V = xr.open_dataarray(data_dir + 'v_ERA5_6hr_2000010100-2000123118.nc').isel(time=slice(None, 8))
     U = U.assign_coords(longitude=(U['longitude'].values + 180) % 360 - 180)
     V = V.assign_coords(longitude=(V['longitude'].values + 180) % 360 - 180)
-    U = latlonsel(U, **sel_slice, latname='latitude', lonname='longitude')
-    V = latlonsel(V, **sel_slice, latname='latitude', lonname='longitude')
-    x, y = parcel_propagation(U.sel(level=level), V.sel(level=level), timestep=-6*3600, SETTLS_order=4, return_traj=False)
-    x2, y2 = parcel_propagation(U.sel(level=level), V.sel(level=level), timestep=-6*3600, SETTLS_order=0, return_traj=False)
+    lats=np.linspace(-89.5, 89.5, 180*2)
+    lons=np.linspace(-179.5, 179.5, 360*2)
+    U = U.interp(latitude=lats, longitude=lons, method='linear')
+    V = V.interp(latitude=lats, longitude=lons, method='linear')
+    # U = latlonsel(U, **sel_slice, latname='latitude', lonname='longitude')
+    # V = latlonsel(V, **sel_slice, latname='latitude', lonname='longitude')
+    x, y = parcel_propagation(U.sel(level=level), V.sel(level=level), timestep=-6*3600,
+                                  SETTLS_order=4, return_traj=True, s=U.isel(time=0,level=0).size  * U.isel(time=0,level=0).std(), cyclic_xboundary=True,
+                              pole_continuity=False)
+    x1, y1 = parcel_propagation(U.sel(level=level), V.sel(level=level), timestep=-6*3600,
+                              SETTLS_order=4, return_traj=True, s=U.isel(time=0,level=0).size  * U.isel(time=0,level=0).std(), cyclic_xboundary=False, pole_continuity=False)
+    x2, y2 = parcel_propagation(U.sel(level=level), V.sel(level=level), timestep=-6*3600,
+                                SETTLS_order=0, return_traj=False)
 
+    for i in range(x.time.values.shape[0]):
+        fig, axs = plt.subplots(1,2, subplot_kw={'projection': ccrs.Orthographic(-50, -30)})
+        p = (y-y1).isel(time=i).plot(ax=axs[0], transform=ccrs.PlateCarree(), vmin=-2, vmax=2, cmap='RdBu', add_colorbar=False)
+        (x-x1).isel(time=i).plot(ax=axs[1], transform=ccrs.PlateCarree(), vmin=-2, vmax=2, cmap='RdBu', add_colorbar=False)
+        axs[0].coastlines()
+        axs[1].coastlines()
+        axs[0].set_title('Lat error')
+        axs[1].set_title('Lon error')
+        plt.colorbar(p, ax=axs, orientation='horizontal')
+        plt.show()
+    for i in range(x.time.values.shape[0]):
+        fig, axs = plt.subplots(2, 1, subplot_kw={'projection': ccrs.PlateCarree()})
+        p = x.isel(time=i).sel(latitude=slice(-40, 40)).plot(ax=axs[0], transform=ccrs.PlateCarree(), vmin=-90*2, vmax=90*2, cmap=cmr.fusion,
+                                       add_colorbar=False)
+        y.isel(time=i).sel(latitude=slice(-40, 40)).plot(ax=axs[1], transform=ccrs.PlateCarree(), vmin=-90, vmax=90, cmap=cmr.seasons,
+                                   add_colorbar=False)
+
+        # p2 = y.isel(time=i).sel(latitude=slice(-80, 80)).plot(ax=axs[1,0], transform=ccrs.PlateCarree(), vmin=-90, vmax=90, cmap='RdBu',
+        #                                add_colorbar=False)
+        # y1.isel(time=i).sel(latitude=slice(-80, 80)).plot(ax=axs[1,1], transform=ccrs.PlateCarree(), vmin=-90, vmax=90, cmap='RdBu',
+        #                            add_colorbar=False)
+        for ax in axs.flatten():
+            ax.coastlines()
+        axs[0].set_title('Longitudinal mixing')
+        axs[1].set_title('Latitudinal mixing')
+        # axs[1, 0].set_title('Cyclic')
+        # axs[1, 1].set_title('Solid')
+        # plt.colorbar(p, ax=axs, orientation='horizontal')
+        plt.savefig(f'temp_figs_{i:02d}_tropics.png', dpi=600, boundary='trim')
+        plt.close()
     U = U.sortby('longitude')
     U = U.sortby('latitude')
     V = V.sortby('longitude')
     V = V.sortby('latitude')
+
+
     import cartopy.crs as ccrs
 
     fig, ax = plt.subplots(1, 1, subplot_kw=dict(projection=ccrs.PlateCarree()), figsize=[20, 10])
