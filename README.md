@@ -1,4 +1,6 @@
-<img src="https://github.com/gabrielmpp/LagrangianCoherence/blob/master/LCS/temp_anim/anim.gif" width="500">
+<img src="https://github.com/gabrielmpp/LagrangianCoherence/blob/master/LCS/temp_anim/anim.gif" width="500" class="center">
+
+
 # LagrangianCoherence
 
 Library for computing the Finite-time Lyapunov Exponents (FTLE) in 2D geophysical flows built on xarray and scipy.
