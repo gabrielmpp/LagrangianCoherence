@@ -12,8 +12,8 @@ import numpy as np
 from LagrangianCoherence.LCS.trajectory import parcel_propagation
 from xr_tools.tools import latlonsel
 from scipy.linalg import norm
-
-
+from LagrangianCoherence.LCS.tools import derivative_spherical_coords, fourth_order_derivative
+from IPython.core.debugger import set_trace
 class LCS:
     """
     API to compute the Finite-time Lyapunov exponent in 2D wind fields
@@ -42,7 +42,8 @@ class LCS:
         self.gauss_sigma = gauss_sigma
         self.return_dpts = return_dpts
     def __call__(self, ds: xr.Dataset = None, u: xr.DataArray = None, v: xr.DataArray = None,
-                 verbose=True, s=None, resample=None, s_is_error=False) -> xr.DataArray:
+                 verbose=True, s=None, resample=None, s_is_error=False, isglobal=False,
+                 return_traj=False) -> xr.DataArray:
 
         """
 
@@ -64,6 +65,7 @@ class LCS:
         >>> ftle = lcs(ds, verbose=False)
         """
         global verboseprint
+
         print('!' * 100)
         verboseprint = print if verbose else lambda *a, **k: None
 
@@ -95,12 +97,28 @@ class LCS:
         u = u.sortby('longitude')
         v = v.sortby('latitude')
         v = v.sortby('longitude')
-
+        if isglobal:
+            lats = np.linspace(-89.5, 89.5, 180 * 2)
+            lons = np.linspace(-179.5, 179.5, 360 * 2)
+            u = u.interp(latitude=lats, longitude=lons, method='linear')
+            v = v.interp(latitude=lats, longitude=lons, method='linear')
+            cyclic_xboundary = True
+            self.subdomain = None
+        else:
+            cyclic_xboundary = False
+        if s is None:
+            s = int(10*u.isel({timedim: 0}).size * u.isel({timedim: 0}).std())
+            print(f'using s = ' + str(s/1e6) + '1e6')
         verboseprint("*---- Parcel propagation ----*")
         x_departure, y_departure = parcel_propagation(u, v, timestep, propdim=self.timedim,
                                                       SETTLS_order=self.SETTLS_order,
-                                                      verbose=verbose, s=s, s_is_error=s_is_error)
-
+                                                      verbose=verbose, s=s, s_is_error=s_is_error,
+                                                      cyclic_xboundary=cyclic_xboundary, return_traj=return_traj)
+        if return_traj:
+            x_trajs = x_departure.copy()
+            y_trajs = y_departure.copy()
+            x_departure = x_departure.isel({timedim: -1})
+            y_departure = y_departure.isel({timedim: -1})
         verboseprint("*---- Computing deformation tensor ----*")
 
         def_tensor = compute_deftensor(x_departure, y_departure, sigma=self.gauss_sigma)
@@ -114,7 +132,7 @@ class LCS:
         #                             )
         verboseprint("*---- Computing eigenvalues ----*")
         vals = def_tensor.transpose(..., 'points').values
-        vals = vals.reshape([2, 2, def_tensor.shape[-1]])
+        vals = vals.reshape([3, 3, def_tensor.shape[-1]])
         def_tensor_norm = norm(vals, axis=(0, 1), ord=2)
         def_tensor_norm = def_tensor.isel(derivatives=0).drop('derivatives').copy(data=def_tensor_norm)
         verboseprint("*---- Done eigenvalues ----*")
@@ -122,8 +140,12 @@ class LCS:
         timestamp = u[self.timedim].values[0] if np.sign(timestep) == 1 else u[self.timedim].values[-1]
         def_tensor_norm['time'] = timestamp
         eigenvalues = def_tensor_norm.expand_dims(self.timedim)
-        if self.return_dpts:
+        if self.return_dpts and return_traj:
+            return eigenvalues, x_departure, y_departure, x_trajs, y_trajs
+        elif self.return_dpts:
             return eigenvalues, x_departure, y_departure
+        elif return_traj:
+            return eigenvalues, x_trajs, y_trajs
         else:
             return eigenvalues
 
@@ -151,34 +173,33 @@ def compute_deftensor(x_departure: xr.DataArray, y_departure: xr.DataArray, sigm
     # --- Conversion from Continuum Mechanics for Engineers: Theory and Problems, X Oliver, C Saracibar
     # Line element https://en.wikipedia.org/wiki/Spherical_coordinate_system
     earth_r = 6371000
-    y =  y_departure.latitude.copy()
-    y = y * np.pi / 180  # to rad
-    x = x_departure.longitude.copy() * np.pi / 180
-    X = x_departure.copy() * np.pi/180
-    Y = y_departure.copy() * np.pi/180
-
-    dX = earth_r * np.cos(Y) * X.diff('longitude')
-    dx = earth_r * np.cos(y) * x.diff('longitude')
-
-    dY = earth_r * Y.diff('latitude')
-    dy = earth_r * y.diff('latitude')
-
-    dXdx = dX/dx
-    dXdy = dX/dy
-    dYdy = dY/dy
-    dYdx = dY/dx
-
-    dXdx = dXdx.transpose('latitude', 'longitude')
-    dXdy = dXdy.transpose('latitude', 'longitude')
-    dYdy = dYdy.transpose('latitude', 'longitude')
-    dYdx = dYdx.transpose('latitude', 'longitude')
+    model_res = .25 * np.pi/180
+    LON = x_departure.copy() * np.pi/180
+    LAT = (y_departure.copy()-90) * np.pi/180  # colatitude in radians
+    X = earth_r * np.sin(LAT) * np.cos(LON)
+    Y = earth_r * np.sin(LAT) * np.sin(LON)
+    Z = earth_r * np.cos(LAT)
+    dXdx = derivative_spherical_coords(X, dim=1)
+    dXdy = derivative_spherical_coords(X, dim=0)
+    dYdx = derivative_spherical_coords(Y, dim=1)
+    dYdy = derivative_spherical_coords(Y, dim=0)
+    dZdx = derivative_spherical_coords(Z, dim=1)
+    dZdy = derivative_spherical_coords(Z, dim=0)
+    dXdr = xr.zeros_like(dXdx)
+    dYdr = xr.zeros_like(dYdx)
+    dZdr = xr.zeros_like(dZdx)
 
     dXdx.name = 'dxdx'
     dXdy.name = 'dxdy'
     dYdy.name = 'dydy'
     dYdx.name = 'dydx'
+    dZdx.name = 'dzdx'
+    dZdy.name = 'dzdy'
+    dXdr.name = 'dxdr'
+    dYdr.name = 'dydr'
+    dZdr.name = 'dzdr'
 
-    def_tensor = xr.merge([dXdx, dXdy, dYdx, dYdy])
+    def_tensor = xr.merge([dXdx, dXdy, dYdx, dYdy, dZdx, dZdy, dXdr, dYdr, dZdr])
     def_tensor = def_tensor.to_array()
     def_tensor = def_tensor.rename({'variable': 'derivatives'})
     def_tensor = def_tensor.transpose('derivatives', 'latitude', 'longitude')
@@ -197,6 +218,7 @@ def create_arrays_list(ds, groupdim='points'):
 if __name__ == '__main__':
     import sys
     import subprocess
+
     # Args: timestep, timedim, SETTLS_order, subdomain, ds_path, outpath
     print('*----- ARGS ------*')
     print(sys.argv)
@@ -204,9 +226,27 @@ if __name__ == '__main__':
     subdomain = {'longitude': slice(float(coords[0]), float(coords[1])),
                  'latitude': slice(float(coords[2]), float(coords[3]))}
     lcs = LCS(timestep=float(sys.argv[1]), timedim=str(sys.argv[2]), SETTLS_order=int(sys.argv[3]),
-              subdomain=subdomain)
+              subdomain=None)
     input_path = str(sys.argv[5])
-    out = lcs(ds=str(sys.argv[5]), s=1.5e6)
-    print('Savin to ' + str(sys.argv[6]))
+    out = lcs(ds=input_path, isglobal=True, s=3e6)
+    print('Saving to ' + str(sys.argv[6]))
     out.to_netcdf(sys.argv[6])
     subprocess.call(['rm', input_path])
+
+    # ncpath = '/work/scratch-nopw/gmpp/experiment_timelen_8_902214ae-5f9a-45d8-b45c-d53239154b37/' \
+    #          'input_partial_1981-01-01T00:00:00.000000000.nc'
+    # subdomain = None
+    # timestep = - 6 * 3600
+    # SETTLS_order = 4
+    # timedim='time'
+    # import matplotlib.pyplot as plt
+    # import cartopy.crs as ccrs
+    # lcs = LCS(timestep=timestep, timedim=timedim, SETTLS_order=SETTLS_order, subdomain=subdomain)
+    # out = lcs(ncpath, isglobal=True, s=3e6)
+    # import cmasher as cmr
+    # fig, ax = plt.subplots(1, 1, subplot_kw={'projection': ccrs.Robinson()})
+    # (.5*np.log(out)).isel(time=0).plot(ax=ax, vmin=0, vmax=2.5, transform=ccrs.PlateCarree(), cmap = cmr.freeze,
+    #                        cbar_kwargs={'shrink': 0.6})
+    # ax.coastlines(color='white')
+    # plt.savefig('LagrangianCoherence/LCS/temp_figs.png', dpi=600)
+    # plt.close()

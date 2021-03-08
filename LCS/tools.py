@@ -5,6 +5,8 @@ import xarray as xr
 import pandas as pd
 import matplotlib.pyplot as plt
 from copy import deepcopy
+from numba import jit
+
 
 def find_ridges_spherical_hessian(da, sigma=.5, scheme='first_order',
                                   tolerance_threshold=0.0005e-3, return_eigvectors=False):
@@ -31,29 +33,12 @@ def find_ridges_spherical_hessian(da, sigma=.5, scheme='first_order',
     if isinstance(sigma, (float, int)):
         da = da.copy(data=gaussian_filter(da, sigma=sigma))
 
-    # Initializing
-    earth_r = 6371000
-    x = da.longitude.copy() * np.pi / 180
-    y = da.latitude.copy() * np.pi / 180
-    dx = x.diff('longitude') * earth_r * np.cos(y)
-    dy = y.diff('latitude') * earth_r
-    dx_scaling = 2 * da.longitude.diff('longitude').values[0]  # grid spacing for xr.differentiate
-    dy_scaling = 2 * da.latitude.diff('latitude').values[0]  # grid spacing
-    # Calc derivatives
-    if scheme == 'second_order':
-        ddadx = dx_scaling * da.differentiate('longitude') / dx
-        ddady = dy_scaling * da.differentiate('latitude') / dy
-        d2dadx2 = dx_scaling * ddadx.differentiate('longitude') / dx
-        d2dadxdy = dy_scaling * ddadx.differentiate('latitude') / dy
-        d2dady2 = dx_scaling * ddady.differentiate('latitude') / dy
-        d2dadydx = d2dadxdy.copy()
-    elif scheme == 'first_order':
-        ddadx = da.diff('longitude') / dx
-        ddady = da.diff('latitude') / dy
-        d2dadx2 = ddadx.diff('longitude') / dx
-        d2dadxdy = ddadx.diff('latitude') / dy
-        d2dady2 = ddady.diff('latitude') / dy
-        d2dadydx = d2dadxdy.copy()
+    ddadx = derivative_spherical_coords(da, dim=1)
+    ddady = derivative_spherical_coords(da, dim=0)
+    d2dadx2 = derivative_spherical_coords(ddadx, dim=1)
+    d2dady2 = derivative_spherical_coords(ddady, dim=0)
+    d2dadxdy = derivative_spherical_coords(ddadx, dim=0)
+    d2dadydx = d2dadxdy.copy()
     # Assembling Hessian array
     gradient = xr.concat([ddadx, ddady],
                          dim=pd.Index(['ddadx', 'ddady'],
@@ -86,19 +71,20 @@ def find_ridges_spherical_hessian(da, sigma=.5, scheme='first_order',
         # eigenvetor of smallest eigenvalue
         # eigvector = eigvector/np.max(np.abs(eigvector))  # normalizing the eigenvector to recover t hat
 
-        dt_angle = np.dot(eigvector, grad_vals[:, i]) #/ (np.linalg.norm(eigvector) *
-                                                        #                    np.linalg.norm(grad_vals[:, i]))
+        dt_angle = np.dot(eigvector, grad_vals[:, i])  # / (np.linalg.norm(eigvector) *
+        #                    np.linalg.norm(grad_vals[:, i]))
         # dt_angle = .5*np.pi - np.arccos(np.abs(dt_angle))
         val_list.append(dt_angle)
         eigmin_list.append(eig[0][np.argmax(np.abs(eig[0]))])
         eigvector_list.append(eigvector)
         eigvector_min_list.append(eigvector_min)
 
+    eigvectors = hessian.isel(elements=[1, 2]).copy(data=np.array(eigvector_list).T).rename(
+        elements='eigvectors').unstack()
+    angle = 180 / np.pi * np.arctan(eigvectors.isel(eigvectors=0) / eigvectors.isel(eigvectors=1)).T
 
-    eigvectors=hessian.isel(elements=[1, 2]).copy(data=np.array(eigvector_list).T).rename(elements='eigvectors').unstack()
-    angle = 180/np.pi*np.arctan(eigvectors.isel(eigvectors=0) / eigvectors.isel(eigvectors=1)).T
-
-    eigvectors_min=hessian.isel(elements=[1, 2]).copy(data=np.array(eigvector_min_list).T).rename(elements='eigvectors').unstack()
+    eigvectors_min = hessian.isel(elements=[1, 2]).copy(data=np.array(eigvector_min_list).T).rename(
+        elements='eigvectors').unstack()
     dt_prod = hessian.isel(elements=0).drop('elements').copy(data=val_list).unstack()
     dt_prod_ = dt_prod.copy()
     eigmin = hessian.isel(elements=0).drop('elements').copy(data=eigmin_list).unstack()
@@ -107,7 +93,7 @@ def find_ridges_spherical_hessian(da, sigma=.5, scheme='first_order',
     dt_prod = dt_prod.where(np.abs(dt_prod_) <= tolerance_threshold, 0)
     dt_prod = dt_prod.where(np.abs(dt_prod_) > tolerance_threshold, 1)
     dt_prod = dt_prod.where(np.sign(eigmin) == -1, 0)
-    angle = angle*dt_prod.where(dt_prod > 0)
+    angle = angle * dt_prod.where(dt_prod > 0)
     # shear = shear.where(dt_prod == 1)
     # rd = np.sqrt(np.abs(shear) * 86400 / da)
     # rd.plot(robust=True)
@@ -116,11 +102,14 @@ def find_ridges_spherical_hessian(da, sigma=.5, scheme='first_order',
     # plt.show()
     # plt.log(True)
     if return_eigvectors:
-        return dt_prod.unstack().transpose(..., *original_dim_order), eigmin.unstack().transpose(..., *original_dim_order), \
-               eigvectors.unstack().transpose(..., *original_dim_order), gradient.unstack().transpose(..., *original_dim_order), \
+        return dt_prod.unstack().transpose(..., *original_dim_order), eigmin.unstack().transpose(...,
+                                                                                                 *original_dim_order), \
+               eigvectors.unstack().transpose(..., *original_dim_order), gradient.unstack().transpose(...,
+                                                                                                      *original_dim_order), \
                angle.transpose(..., *original_dim_order)
     else:
-        return dt_prod.unstack().transpose(..., *original_dim_order), eigmin.unstack().transpose(..., *original_dim_order),
+        return dt_prod.unstack().transpose(..., *original_dim_order), eigmin.unstack().transpose(...,
+                                                                                                 *original_dim_order),
 
 
 def latlonsel(array, lat, lon, latname='lat', lonname='lon'):
@@ -153,3 +142,64 @@ def latlonsel(array, lat, lon, latname='lat', lonname='lon'):
     latmask = (array[latname] < lat2) & (array[latname] > lat1)
     array = array.where(lonmask, drop=True).where(latmask, drop=True)
     return array
+
+
+@jit(nopython=True)
+def fourth_order_derivative(arr: np.ndarray, dim=0):
+    """
+    2D numpy array with dims [lat, lon]
+    :param arr:
+    :return:
+    """
+    # assert isinstance(arr, np.ndarray), 'Input must be numpy array'
+    output = np.zeros_like(arr)
+
+    if dim == 0:
+        ysize = np.shape(arr)[0]
+        for lat_idx in range(2, np.shape(arr - 2)[0]):
+            for lon_idx in range(np.shape(arr)[1]):
+                output[lat_idx, lon_idx] = (4 / 3) * (arr[(lat_idx + 1), lon_idx] -
+                                                      arr[(lat_idx - 1), lon_idx]) / 2 \
+                                           - (1 / 3) * (arr[(lat_idx + 2), lon_idx] -
+                                                        arr[(lat_idx - 2), lon_idx]) / 4
+
+        #  First order uncentered derivative for points close to the poles
+        for lat_idx in [0, 1]:
+            for lon_idx in range(np.shape(arr)[1]):
+                output[lat_idx, lon_idx] = (arr[(lat_idx + 1), lon_idx] -
+                                            arr[lat_idx, lon_idx]) / 2
+        for lat_idx in [-1, -2]:
+            for lon_idx in range(np.shape(arr)[1]):
+                output[lat_idx, lon_idx] = (arr[lat_idx, lon_idx] -
+                                            arr[lat_idx - 1, lon_idx]) / 2
+    elif dim == 1:
+        xsize = np.shape(arr)[1]
+        for lat_idx in range(np.shape(arr)[0]):
+            for lon_idx in range(np.shape(arr)[1]):
+                output[lat_idx, lon_idx] = (4 / 3) * (arr[lat_idx, (lon_idx + 1) % xsize] -
+                                                      arr[lat_idx, (lon_idx - 1) % xsize]) / 2 \
+                                           - (1 / 3) * (arr[lat_idx, (lon_idx + 2) % xsize] -
+                                                        arr[lat_idx, (lon_idx - 2) % xsize]) / 4
+
+    return output
+
+
+def derivative_spherical_coords(da, dim=0):
+    EARTH_RADIUS = 6371000  # m
+    da = da.sortby('latitude')
+    da = da.sortby('longitude')
+    da = da.transpose('latitude', 'longitude')
+    x = da.longitude.copy() * np.pi / 180
+    y = da.latitude.copy() * np.pi / 180
+    dx = (np.pi/180) * (da.longitude.values[1] - da.longitude.values[0]) * EARTH_RADIUS * np.cos(y)
+    dy = (np.pi/180) * (da.latitude.values[1] - da.latitude.values[0]) * EARTH_RADIUS
+    deriv = fourth_order_derivative(da.values, dim=dim)
+    deriv = da.copy(data=deriv)
+
+    if dim == 0:
+        deriv = deriv / dy
+    elif dim == 1:
+        deriv = deriv / dx
+    else:
+        raise ValueError('Dim must be either 0 or 1.')
+    return da.copy(data=deriv)
