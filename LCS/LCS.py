@@ -121,7 +121,7 @@ class LCS:
             y_departure = y_departure.isel({timedim: -1})
         verboseprint("*---- Computing deformation tensor ----*")
 
-        def_tensor = compute_deftensor(x_departure, y_departure, sigma=self.gauss_sigma)
+        def_tensor = flowmap_gradient(x_departure, y_departure, sigma=self.gauss_sigma)
         if isinstance(self.subdomain, dict):
             def_tensor = latlonsel(def_tensor, **self.subdomain)
         def_tensor = def_tensor.stack({'points': ['latitude', 'longitude']})
@@ -150,7 +150,7 @@ class LCS:
             return eigenvalues
 
 
-def compute_deftensor(x_departure: xr.DataArray, y_departure: xr.DataArray, sigma=None) -> xr.DataArray:
+def flowmap_gradient(x_departure: xr.DataArray, y_departure: xr.DataArray, sigma=None) -> xr.DataArray:
 
     """
     Method to compute the deformation tensor
