@@ -49,7 +49,8 @@ def xr_map_coordinates(da, new_x, new_y, isglobal=True, order=1):
 
 
 def find_ridges_spherical_hessian(da, sigma=.5, scheme='first_order',
-                                  tolerance_threshold=0.0005e-3, return_eigvectors=False):
+                                  tolerance_threshold=0.0005e-3, return_eigvectors=False,
+                                  isglobal=True):
     """
     Method to in apply a Hessian filter in spherical coordinates
     Parameters
@@ -73,11 +74,11 @@ def find_ridges_spherical_hessian(da, sigma=.5, scheme='first_order',
     if isinstance(sigma, (float, int)):
         da = da.copy(data=gaussian_filter(da, sigma=sigma))
 
-    ddadx = derivative_spherical_coords(da, dim=1)
-    ddady = derivative_spherical_coords(da, dim=0)
-    d2dadx2 = derivative_spherical_coords(ddadx, dim=1)
-    d2dady2 = derivative_spherical_coords(ddady, dim=0)
-    d2dadxdy = derivative_spherical_coords(ddadx, dim=0)
+    ddadx = derivative_spherical_coords(da, dim=1, isglobal=isglobal)
+    ddady = derivative_spherical_coords(da, dim=0, isglobal=isglobal)
+    d2dadx2 = derivative_spherical_coords(ddadx, dim=1, isglobal=isglobal)
+    d2dady2 = derivative_spherical_coords(ddady, dim=0, isglobal=isglobal)
+    d2dadxdy = derivative_spherical_coords(ddadx, dim=0, isglobal=isglobal)
     d2dadydx = d2dadxdy.copy()
     # Assembling Hessian array
     gradient = xr.concat([ddadx, ddady],
@@ -242,7 +243,7 @@ def fourth_order_derivative(arr: np.ndarray, dim=0, isglobal=True):
     return output
 
 
-def derivative_spherical_coords(da, dim=0):
+def derivative_spherical_coords(da, dim=0, isglobal=True):
     EARTH_RADIUS = 6371000  # m
     da = da.sortby('latitude')
     da = da.sortby('longitude')
@@ -251,7 +252,7 @@ def derivative_spherical_coords(da, dim=0):
     y = da.latitude.copy() * np.pi / 180
     dx = (np.pi/180) * (da.longitude.values[1] - da.longitude.values[0]) * EARTH_RADIUS * np.cos(y)
     dy = (np.pi/180) * (da.latitude.values[1] - da.latitude.values[0]) * EARTH_RADIUS
-    deriv = fourth_order_derivative(da.values, dim=dim)
+    deriv = fourth_order_derivative(da.values, dim=dim, isglobal=isglobal)
     deriv = da.copy(data=deriv)
 
     if dim == 0:
