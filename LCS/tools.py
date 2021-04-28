@@ -1,15 +1,56 @@
 import numpy as np
-from skimage.feature import hessian_matrix_eigvals
 from scipy.ndimage import gaussian_filter
 import xarray as xr
 import pandas as pd
-import matplotlib.pyplot as plt
 from copy import deepcopy
 from numba import jit
+from scipy.ndimage import map_coordinates
+
+
+def xr_map_coordinates(da, new_x, new_y, isglobal=True, order=1):
+    da = da.copy().transpose('latitude', 'longitude')
+    new_x = new_x.copy()
+    new_y = new_y.copy()
+    if isinstance(new_y, (xr.DataArray, xr.Dataset)):
+        new_y = new_y.values
+    if isinstance(new_x, (xr.DataArray, xr.Dataset)):
+        new_x = new_x.values
+    x_size = da.longitude.values.shape[0]
+    y_size = da.latitude.values.shape[0]
+    new_x = x_size * (new_x - da.longitude.min().values) / (da.longitude.max().values - da.longitude.min().values)
+    new_y = y_size * (new_y - da.latitude.min().values) / (da.latitude.max().values - da.latitude.min().values)
+    if isglobal:
+        da_except_poles = da.isel(latitude=slice(order, -order))
+        idxs = np.arange(order, da.latitude.values.shape[0]-order)
+        da_interp = da_except_poles.copy(data=map_coordinates(da.values,
+                                                              np.array([new_y[idxs, :].ravel(),
+                                                                        new_x[idxs, :].ravel()]),
+                                                              order=order,
+                                                              mode='wrap').reshape(da_except_poles.shape))
+        idxs_1 = np.arange(0, order)
+        idxs_2 = np.arange(-order, 0)
+        pole_idxs = np.hstack([idxs_1, idxs_2])
+        da_poles = da.isel(latitude=pole_idxs)
+        da_interp_poles = da_poles.copy(data=map_coordinates(da.values,
+                                                             np.array([new_y[pole_idxs, :].ravel(),
+                                                                       new_x[pole_idxs, :].ravel()]),
+                                                             order=1,
+                                                             mode='constant').reshape(da_poles.shape))
+
+        da_interp = xr.concat([da_interp_poles, da_interp], dim='latitude').sortby('latitude')
+    else:
+        da_interp = da.copy(data=map_coordinates(da.values,
+                                                 np.array([new_y.ravel(),
+                                                           new_x.ravel()]),
+                                                 order=1,
+                                                 mode='wrap').reshape(da_except_poles.shape))
+    return da_interp
+
 
 
 def find_ridges_spherical_hessian(da, sigma=.5, scheme='first_order',
-                                  tolerance_threshold=0.0005e-3, return_eigvectors=False):
+                                  tolerance_threshold=0.0005e-3, return_eigvectors=False,
+                                  isglobal=True):
     """
     Method to in apply a Hessian filter in spherical coordinates
     Parameters
@@ -33,11 +74,11 @@ def find_ridges_spherical_hessian(da, sigma=.5, scheme='first_order',
     if isinstance(sigma, (float, int)):
         da = da.copy(data=gaussian_filter(da, sigma=sigma))
 
-    ddadx = derivative_spherical_coords(da, dim=1)
-    ddady = derivative_spherical_coords(da, dim=0)
-    d2dadx2 = derivative_spherical_coords(ddadx, dim=1)
-    d2dady2 = derivative_spherical_coords(ddady, dim=0)
-    d2dadxdy = derivative_spherical_coords(ddadx, dim=0)
+    ddadx = derivative_spherical_coords(da, dim=1, isglobal=isglobal)
+    ddady = derivative_spherical_coords(da, dim=0, isglobal=isglobal)
+    d2dadx2 = derivative_spherical_coords(ddadx, dim=1, isglobal=isglobal)
+    d2dady2 = derivative_spherical_coords(ddady, dim=0, isglobal=isglobal)
+    d2dadxdy = derivative_spherical_coords(ddadx, dim=0, isglobal=isglobal)
     d2dadydx = d2dadxdy.copy()
     # Assembling Hessian array
     gradient = xr.concat([ddadx, ddady],
@@ -145,7 +186,7 @@ def latlonsel(array, lat, lon, latname='lat', lonname='lon'):
 
 
 @jit(nopython=True)
-def fourth_order_derivative(arr: np.ndarray, dim=0):
+def fourth_order_derivative(arr: np.ndarray, dim=0, isglobal=True):
     """
     2D numpy array with dims [lat, lon]
     :param arr:
@@ -156,7 +197,7 @@ def fourth_order_derivative(arr: np.ndarray, dim=0):
 
     if dim == 0:
         ysize = np.shape(arr)[0]
-        for lat_idx in range(2, np.shape(arr - 2)[0]):
+        for lat_idx in range(2, np.shape(arr)[0] - 2):
             for lon_idx in range(np.shape(arr)[1]):
                 output[lat_idx, lon_idx] = (4 / 3) * (arr[(lat_idx + 1), lon_idx] -
                                                       arr[(lat_idx - 1), lon_idx]) / 2 \
@@ -174,17 +215,35 @@ def fourth_order_derivative(arr: np.ndarray, dim=0):
                                             arr[lat_idx - 1, lon_idx]) / 2
     elif dim == 1:
         xsize = np.shape(arr)[1]
-        for lat_idx in range(np.shape(arr)[0]):
-            for lon_idx in range(np.shape(arr)[1]):
-                output[lat_idx, lon_idx] = (4 / 3) * (arr[lat_idx, (lon_idx + 1) % xsize] -
-                                                      arr[lat_idx, (lon_idx - 1) % xsize]) / 2 \
-                                           - (1 / 3) * (arr[lat_idx, (lon_idx + 2) % xsize] -
-                                                        arr[lat_idx, (lon_idx - 2) % xsize]) / 4
+        if isglobal:
+            for lat_idx in range(np.shape(arr)[0]):
 
+                for lon_idx in range(np.shape(arr)[1]):
+
+                    output[lat_idx, lon_idx] = (4 / 3) * (arr[lat_idx, (lon_idx + 1) % xsize] -
+                                                          arr[lat_idx, (lon_idx - 1) % xsize]) / 2 \
+                                               - (1 / 3) * (arr[lat_idx, (lon_idx + 2) % xsize] -
+                                                            arr[lat_idx, (lon_idx - 2) % xsize]) / 4
+        else:
+            for lat_idx in range(np.shape(arr)[0]):
+                for lon_idx in range(2, np.shape(arr)[1] - 2):
+                    output[lat_idx, lon_idx] = (4 / 3) * (arr[lat_idx, (lon_idx + 1)] -
+                                                          arr[lat_idx, (lon_idx - 1)]) / 2 \
+                                               - (1 / 3) * (arr[lat_idx, (lon_idx + 2)] -
+                                                            arr[lat_idx, (lon_idx - 2)]) / 4
+            #  First order uncentered derivative for points close to the bondaries
+            for lon_idx in [0, 1]:
+                for lat_idx in range(np.shape(arr)[0]):
+                    output[lat_idx, lon_idx] = (arr[lat_idx, lon_idx+1] -
+                                                arr[lat_idx, lon_idx]) / 2
+            for lon_idx in [-1, -2]:
+                for lat_idx in range(np.shape(arr)[0]):
+                    output[lat_idx, lon_idx] = (arr[lat_idx, lon_idx] -
+                                                arr[lat_idx, lon_idx-1]) / 2
     return output
 
 
-def derivative_spherical_coords(da, dim=0):
+def derivative_spherical_coords(da, dim=0, isglobal=True):
     EARTH_RADIUS = 6371000  # m
     da = da.sortby('latitude')
     da = da.sortby('longitude')
@@ -193,7 +252,7 @@ def derivative_spherical_coords(da, dim=0):
     y = da.latitude.copy() * np.pi / 180
     dx = (np.pi/180) * (da.longitude.values[1] - da.longitude.values[0]) * EARTH_RADIUS * np.cos(y)
     dy = (np.pi/180) * (da.latitude.values[1] - da.latitude.values[0]) * EARTH_RADIUS
-    deriv = fourth_order_derivative(da.values, dim=dim)
+    deriv = fourth_order_derivative(da.values, dim=dim, isglobal=isglobal)
     deriv = da.copy(data=deriv)
 
     if dim == 0:
@@ -203,3 +262,71 @@ def derivative_spherical_coords(da, dim=0):
     else:
         raise ValueError('Dim must be either 0 or 1.')
     return da.copy(data=deriv)
+
+
+
+@jit(nopython=True)
+def harvesine(lon1, lat1, lon2, lat2):
+    rad = np.pi / 180  # degree to radian
+    R = 6378.1  # earth average radius at equador (km)
+    dlon = (lon2 - lon1) * rad
+    dlat = (lat2 - lat1) * rad
+    a = (np.sin(dlat / 2)) ** 2 + np.cos(lat1 * rad) * \
+        np.cos(lat2 * rad) * (np.sin(dlon / 2)) ** 2
+    c = 2 * np.arctan(np.sqrt(a), np.sqrt(1 - a))
+    d = R * c
+    return d
+
+
+@jit(nopython=True)
+def Inverse_weighted_interpolation(x, y, z, xi, yi,power=2):
+    lstxyzi = []
+    for p in range(len(xi)):
+        lstdist = []
+        for s in range(len(x)):
+            d = (harvesine(x[s], y[s], xi[p], yi[p]))
+            lstdist.append(d)
+        sumsup = list((1 / np.power(lstdist, power)))
+        suminf = np.sum(sumsup)
+        sumsup = np.sum(np.array(sumsup) * np.array(z))
+        u = sumsup / suminf
+        # xyzi = [xi[p], yi[p], u]
+        xyzi = u
+        lstxyzi.append(xyzi)
+    return lstxyzi
+
+
+def xr_idx_interp(ds_y_for_spline, lon, lat, p=2):
+    """
+    https://rafatieppo.github.io/post/2018_07_27_idw2pyr/
+    :param ds_y_for_spline:
+    :param lon:
+    :param lat:
+    :return:
+    """
+    ds_y_for_spline = ds_y_for_spline.load()
+    print('interp idx')
+    Lon, Lat = np.meshgrid(lon, lat)
+
+    out_shape = Lon.shape
+
+    Lon = Lon.ravel()
+    Lat = Lat.ravel()
+
+    def interp_idw(dd,Lon,Lat, out_shape,lat,lon,p):
+
+        ds_interp = Inverse_weighted_interpolation(dd.longitude.values,
+                                                   dd.latitude.values,
+                                                   dd.values,
+                                                   Lon,
+                                                   Lat,p)
+
+        ds_interp = xr.DataArray(np.array(ds_interp).reshape(out_shape), dims=['latitude', 'longitude'],
+                                 coords={'longitude':lon,
+                                         'latitude':lat})
+        return ds_interp
+
+    ds_interp_grid = interp_idw(ds_y_for_spline, Lon, Lat, out_shape, lat, lon, p)
+    return ds_interp_grid
+
+

@@ -14,6 +14,8 @@ from xr_tools.tools import latlonsel
 from scipy.linalg import norm
 from LagrangianCoherence.LCS.tools import derivative_spherical_coords, fourth_order_derivative
 from IPython.core.debugger import set_trace
+
+
 class LCS:
     """
     API to compute the Finite-time Lyapunov exponent in 2D wind fields
@@ -21,7 +23,8 @@ class LCS:
     earth_r = 6371000  # metres
 
     def __init__(self, timestep: float = 1, timedim='time',
-                 SETTLS_order=0, subdomain=None, return_dpts=False, gauss_sigma=None):
+                 SETTLS_order=0, subdomain=None, return_dpts=False,
+                 gauss_sigma=None):
         """
 
         :param timestep: float,
@@ -41,9 +44,11 @@ class LCS:
         self.subdomain = subdomain
         self.gauss_sigma = gauss_sigma
         self.return_dpts = return_dpts
+
     def __call__(self, ds: xr.Dataset = None, u: xr.DataArray = None, v: xr.DataArray = None,
                  verbose=True, s=None, resample=None, s_is_error=False, isglobal=False,
-                 return_traj=False) -> xr.DataArray:
+                 return_traj=False, interp_to_common_grid=True,
+                 traj_interp_order=3) -> xr.DataArray:
 
         """
 
@@ -98,10 +103,15 @@ class LCS:
         v = v.sortby('latitude')
         v = v.sortby('longitude')
         if isglobal:
-            lats = np.linspace(-89.5, 89.5, 180 * 2)
-            lons = np.linspace(-179.5, 179.5, 360 * 2)
-            u = u.interp(latitude=lats, longitude=lons, method='linear')
-            v = v.interp(latitude=lats, longitude=lons, method='linear')
+            if interp_to_common_grid:
+                lats = np.linspace(-89.75, 89.75, 180 * 2)
+                lons = np.linspace(-180, 179.5, 360 * 2 + 1)
+                u_reindex = u.reindex(latitude=lats, longitude=lons, method='nearest')
+                v_reindex = v.reindex(latitude=lats, longitude=lons, method='nearest')
+                u_interp = u.interp(latitude=lats, longitude=lons, method='linear')
+                v_interp = v.interp(latitude=lats, longitude=lons, method='linear')
+                u = u_interp.where(~xr.ufuncs.isnan(u_interp), u_reindex)
+                v = v_interp.where(~xr.ufuncs.isnan(v_interp), v_reindex)
             cyclic_xboundary = True
             self.subdomain = None
         else:
@@ -112,8 +122,9 @@ class LCS:
         verboseprint("*---- Parcel propagation ----*")
         x_departure, y_departure = parcel_propagation(u, v, timestep, propdim=self.timedim,
                                                       SETTLS_order=self.SETTLS_order,
-                                                      verbose=verbose, s=s, s_is_error=s_is_error,
-                                                      cyclic_xboundary=cyclic_xboundary, return_traj=return_traj)
+                                                      verbose=verbose,
+                                                      cyclic_xboundary=cyclic_xboundary, return_traj=return_traj,
+                                                      interp_order=traj_interp_order)
         if return_traj:
             x_trajs = x_departure.copy()
             y_trajs = y_departure.copy()
