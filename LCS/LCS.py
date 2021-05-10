@@ -14,7 +14,7 @@ from xr_tools.tools import latlonsel
 from scipy.linalg import norm
 from LagrangianCoherence.LCS.tools import derivative_spherical_coords, fourth_order_derivative
 from IPython.core.debugger import set_trace
-
+from windspharm.xarray import VectorWind
 
 class LCS:
     """
@@ -48,7 +48,7 @@ class LCS:
     def __call__(self, ds: xr.Dataset = None, u: xr.DataArray = None, v: xr.DataArray = None,
                  verbose=True, s=None, resample=None, s_is_error=False, isglobal=False,
                  return_traj=False, interp_to_common_grid=True,
-                 traj_interp_order=3) -> xr.DataArray:
+                 traj_interp_order=3, truncation=20) -> xr.DataArray:
 
         """
 
@@ -112,14 +112,20 @@ class LCS:
                 v_interp = v.interp(latitude=lats, longitude=lons, method='linear')
                 u = u_interp.where(~xr.ufuncs.isnan(u_interp), u_reindex)
                 v = v_interp.where(~xr.ufuncs.isnan(v_interp), v_reindex)
+            if truncation is not None:
+                w = VectorWind(u, v)
+                u = w.truncate(u, truncation=truncation)
+                v = w.truncate(v, truncation=truncation)
             cyclic_xboundary = True
             self.subdomain = None
+
         else:
             cyclic_xboundary = False
         if s is None:
             s = int(10*u.isel({timedim: 0}).size * u.isel({timedim: 0}).std())
             print(f'using s = ' + str(s/1e6) + '1e6')
         verboseprint("*---- Parcel propagation ----*")
+
         x_departure, y_departure = parcel_propagation(u, v, timestep, propdim=self.timedim,
                                                       SETTLS_order=self.SETTLS_order,
                                                       verbose=verbose,
@@ -239,7 +245,7 @@ if __name__ == '__main__':
     lcs = LCS(timestep=float(sys.argv[1]), timedim=str(sys.argv[2]), SETTLS_order=int(sys.argv[3]),
               subdomain=None)
     input_path = str(sys.argv[5])
-    out = lcs(ds=input_path, isglobal=True, s=3e6)
+    out = lcs(ds=input_path, isglobal=True, interp_to_common_grid=True, truncation=20, traj_interp_order=3)
     print('Saving to ' + str(sys.argv[6]))
     out.to_netcdf(sys.argv[6])
     subprocess.call(['rm', input_path])
