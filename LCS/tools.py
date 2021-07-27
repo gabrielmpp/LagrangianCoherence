@@ -252,7 +252,8 @@ def derivative_spherical_coords(da, dim=0, isglobal=True):
     y = da.latitude.copy() * np.pi / 180
     dx = (np.pi/180) * (da.longitude.values[1] - da.longitude.values[0]) * EARTH_RADIUS * np.cos(y)
     dy = (np.pi/180) * (da.latitude.values[1] - da.latitude.values[0]) * EARTH_RADIUS
-    deriv = fourth_order_derivative(da.values, dim=dim, isglobal=isglobal)
+
+    deriv = fourth_order_derivative(np.array(da.values), dim=dim, isglobal=isglobal)
     deriv = da.copy(data=deriv)
 
     if dim == 0:
