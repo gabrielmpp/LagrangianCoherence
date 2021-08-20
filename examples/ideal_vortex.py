@@ -208,16 +208,18 @@ def ideal_vortex(lat_min, lat_max, lon_min, lon_max, dx, dy, nt,
     return u, v
 
 
-vortex_config_equator = {'lat_min': -40, 'lat_max': 40, 'lon_min': -60, 'lon_max': 20, 'dx':1, 'dy': 1, 'u_c': 0.8,
-                         'v_c': 0.8, 'nt': 30, 'radius': 4, 'max_intensity': 1, 'center': [-20, 0]}
+vortex_config_equator = {'lat_min': -88, 'lat_max': 89, 'lon_min': -180,'lon_max': 180, 'dx': 2,
+                             'dy': 2, 'u_c': 0, 'k': 4, 'diag_factor': 1,
+                         'v_c': 0, 'nt': 30, 'radius': 2, 'max_intensity': 40, 'center': [-55, -20]}
+
 shear_flow_config = {'lat_min': -40, 'lat_max': 40, 'lon_min': -60, 'lon_max': 20, 'dx':1, 'dy': 1,
                          'v_c': 0.2, 'nt': 30,  'max_intensity': 1, 'center': [-20, 0]}
-subdomain={'latitude': slice(-20, 20), 'longitude': slice(-40, 0)}
+subdomain={'latitude': slice(None, None), 'longitude': slice(None, None)}
 
 
-vortex_config_subtropical = {'lat_min': -30 - 40, 'lat_max': -30+40, 'lon_min': -55 -40,'lon_max': -55+40, 'dx': .6,
-                             'dy': .6, 'u_c': .3, 'k': 0, 'diag_factor': 1,
-                         'v_c': -.3, 'nt': 30, 'radius': 2, 'max_intensity': 2, 'center': [-55, -20]}
+vortex_config_subtropical = {'lat_min': -88, 'lat_max': 89, 'lon_min': -180,'lon_max': 180, 'dx': 2,
+                             'dy': 2, 'u_c': 1, 'k': 0, 'diag_factor': 1,
+                         'v_c': -1, 'nt': 30, 'radius': 2, 'max_intensity': 40, 'center': [-55, -20]}
 subdomain = {
     'latitude': slice(-20, 20),
     'longitude': slice(-60, -20),
@@ -252,7 +254,8 @@ v.name = 'v'
 
 ds = xr.merge([u, v])
 
-
+ds.isel(time=0).plot.quiver('longitude', 'latitude', 'u', 'v')
+plt.show()
 # ---- Computing departure points and FTLE ---- #
 
 x_dye, y_dye = trajectory.parcel_propagation(ds.u, ds.v,
@@ -260,25 +263,29 @@ x_dye, y_dye = trajectory.parcel_propagation(ds.u, ds.v,
                                      propdim='time',
                                      SETTLS_order=2,
                                      copy=True,
-                                     s=None,
                                      # C=wv,
                                      # Srcs=evap,
-                                     return_traj=True)
+                                     return_traj=True,
+                                     cyclic_xboundary=True)
 x, y = trajectory.parcel_propagation(ds.u, ds.v,
                                      timestep=6 * 3600,
                                      propdim='time',
                                      SETTLS_order=2,
                                      copy=True,
-                                     s=None,
                                      # C=wv,
                                      # Srcs=evap,
-                                     return_traj=True)
+                                     return_traj=True,
+                                     cyclic_xboundary=True)
 rcs = LCS.LCS(timestep=6 * 3600, timedim='time', SETTLS_order=2 )
-ftle_r = rcs(ds.copy())
-ftle_r = np.log(np.sqrt(ftle_r)) / vortex_config['nt']
+ftle_r = rcs(ds.copy(), isglobal=True)
+ftle_r =np.log(ftle_r) / 2
+ftle_r = ftle_r.where(~xr.ufuncs.isnan(ftle_r), 0)
+
+
+ftle_r = np.log(np.sqrt(ftle_r))
 acs = LCS.LCS(timestep=-6 * 3600, timedim='time', SETTLS_order=2, )
-ftle_a = acs(ds.copy())
-ftle_a = np.log(ftle_a) / vortex_config['nt']
+ftle_a = acs(ds.copy(), isglobal=True, )
+ftle_a = np.log(ftle_a) / 2
 
 
 # ---- Plots ---- #
@@ -301,15 +308,23 @@ plt.close()
 
 fig, axs = plt.subplots(1, 3, subplot_kw={
     'projection': ccrs.Orthographic(central_longitude=vortex_config['center'][0])}, figsize=[28, 8])
-ftle_a.where(ftle_a > 0.04).isel(time=0).plot(cmap=cmr.freeze, ax=axs[0], transform=ccrs.PlateCarree(), vmin=0.04)
+ftle_a.isel(time=0).plot(cmap=cmr.freeze, ax=axs[0], transform=ccrs.PlateCarree(), vmin=0)
 ftle_r.isel(time=0).plot(cmap=cmr.flamingo, ax=axs[1], transform=ccrs.PlateCarree(), vmin=0)
-(ftle_a.isel(time=0) - ftle_r.isel(time=0)).plot.contourf(levels=30, cmap=cmr.redshift_r, ax=axs[2], transform=ccrs.PlateCarree())
+(ftle_a.isel(time=0).where(ftle_a.isel(time=0)>0,0).drop('time') -
+ ftle_r.where(ftle_r.isel(time=0)>0,0).isel(time=0).drop('time')).plot(
+    levels=30, cmap=cmr.redshift_r, ax=axs[2], transform=ccrs.PlateCarree())
 axs[0].set_title('Attracting FTLE')
 axs[1].set_title('Repelling FTLE')
 axs[2].set_title('Attracting - Repelling FTLE')
 axs[0].coastlines(color='white')
 axs[1].coastlines(color='white')
 axs[2].coastlines(color='white')
+draw_circle = plt.Circle(vortex_config['center'], vortex_config['radius'], fill=False, color='red')
+axs[0].add_artist(draw_circle, )
+draw_circle = plt.Circle(vortex_config['center'], vortex_config['radius'], fill=False, color='red')
+axs[1].add_artist(draw_circle, )
+draw_circle = plt.Circle(vortex_config['center'], vortex_config['radius'], fill=False, color='red')
+axs[2].add_artist(draw_circle, )
 plt.savefig(f'figs/FTLE_{vortex_type}.pdf')
 plt.close()
 
@@ -326,10 +341,11 @@ for t in range(x.time.values.shape[0]):
     yy = y.isel(time=t).values.flatten()
 
     xxyy = zip(xx, yy)
-    fig, ax = plt.subplots(1, 1, subplot_kw={'projection': ccrs.Orthographic(central_longitude=vortex_config['center'][0])}, figsize=[8, 8])
-    y_dye.isel(time=t).plot.contourf(levels=31, cmap=cmr.iceburn, vmin=y.values.min(), vmax=y.values.max(),
+    fig, ax = plt.subplots(1, 1, subplot_kw={'projection': ccrs.Orthographic(central_longitude=vortex_config['center'][0])},
+                           )
+    y_dye.isel(time=t).plot(cmap=cmr.iceburn, vmin=y.values.min(), vmax=y.values.max(),
                                  ax=ax, add_colorbar=False, transform=ccrs.PlateCarree())
-    ax.streamplot(x=x_plot, y=y_plot, u=u_plot, v=v_plot, linewidth=np.sqrt(u_plot**2  + v_plot**2),color='white',
+    ax.quiver(x_plot, y_plot, u_plot, v_plot, color='white',
                   transform=ccrs.PlateCarree())
     ax.scatter(xx, yy, alpha=0.1, color='white', transform=ccrs.PlateCarree(), edgecolor='white')
 
@@ -338,12 +354,12 @@ for t in range(x.time.values.shape[0]):
     draw_circle = plt.Circle(vortex_config['center'],
                              vortex_config['radius'], fill=False, color='red', transform=ccrs.PlateCarree())
     ax.add_artist(draw_circle)
-    plt.savefig(f'figs/dye/{vortex_type}/'+'ideal_vortex_zonal_dye_{:0>2}.png'.format( t))
+    plt.savefig(f'figs/dye/{vortex_type}/'+'ideal_vortex_zonal_dye_global{:0>2}.png'.format( t), dpi=400)
     plt.close()
 
 
 fig, ax = plt.subplots(1, 1, subplot_kw={'projection': ccrs.PlateCarree()}, figsize=[8, 8])
-y.isel(time=-1).plot.contourf(levels=20, cmap=cmr.iceburn, vmin=y.values.min(), vmax=y.values.max(), ax=ax, add_colorbar=True)
+y_dye.isel(time=-1).plot.contourf(levels=20, cmap=cmr.iceburn, vmin=y.values.min(), vmax=y.values.max(), ax=ax, add_colorbar=True)
 ax.streamplot(x=x_plot, y=y_plot, u=u_plot, v=v_plot)
 ax.coastlines()
 draw_circle = plt.Circle(vortex_config['center'], vortex_config['radius'], fill=False, color='red')

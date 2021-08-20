@@ -73,8 +73,8 @@ def parcel_propagation(U: xr.DataArray,
     pos_list_y = []
     # pos_list_x.append(positions_x)  # appending t=0
     # pos_list_y.append(positions_y)
-    pos_list_x.append(positions_x)
-    pos_list_y.append(positions_y)
+    pos_list_x.append(U.isel(time=0).drop('time').copy(data=positions_x))
+    pos_list_y.append(U.isel(time=0).drop('time').copy(data=positions_y))
 
 
     for time_idx, time in enumerate(times[:-1]):
@@ -128,9 +128,15 @@ def parcel_propagation(U: xr.DataArray,
     if return_traj:
         assert not isinstance(times[0], cftime.Datetime360Day), \
             'Cannot return trajectories with time cooridnates cftime.Datetime360Day.'
-        times = [times[0] - timestep] + times
-        positions_x = xr.concat(pos_list_x, dim=pd.Index(pd.to_datetime(times), name=propdim))
-        positions_y = xr.concat(pos_list_y, dim=pd.Index(pd.to_datetime(times), name=propdim))
+        # times = [times[0] - timestep] + times
+        def fix_time_coord(ds):
+            try:
+                ds = ds.drop('time')
+            except ValueError:
+                pass
+            return ds
+        positions_x = xr.concat([fix_time_coord(x) for x in pos_list_x], dim=pd.Index(pd.to_datetime(times), name=propdim))
+        positions_y = xr.concat([fix_time_coord(y) for y in pos_list_y], dim=pd.Index(pd.to_datetime(times), name=propdim))
     else:
         positions_x = pos_list_x[-1].assign_coords({propdim: times[-1]})  # .expand_dims(propdim)
         positions_y = pos_list_y[-1].assign_coords({propdim: times[-1]})  # .expand_dims(propdim)

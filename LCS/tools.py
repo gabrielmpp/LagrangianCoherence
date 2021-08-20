@@ -5,6 +5,7 @@ import pandas as pd
 from copy import deepcopy
 from numba import jit
 from scipy.ndimage import map_coordinates
+import windspharm
 
 
 def xr_map_coordinates(da, new_x, new_y, isglobal=True, order=1):
@@ -112,8 +113,7 @@ def find_ridges_spherical_hessian(da, sigma=.5, scheme='first_order',
         # eigenvetor of smallest eigenvalue
         # eigvector = eigvector/np.max(np.abs(eigvector))  # normalizing the eigenvector to recover t hat
 
-        dt_angle = np.dot(eigvector, grad_vals[:, i])  # / (np.linalg.norm(eigvector) *
-        #                    np.linalg.norm(grad_vals[:, i]))
+        dt_angle = np.dot(eigvector, grad_vals[:, i])  / (np.linalg.norm(eigvector) * np.linalg.norm(grad_vals[:, i]))
         # dt_angle = .5*np.pi - np.arccos(np.abs(dt_angle))
         val_list.append(dt_angle)
         eigmin_list.append(eig[0][np.argmax(np.abs(eig[0]))])
@@ -134,7 +134,8 @@ def find_ridges_spherical_hessian(da, sigma=.5, scheme='first_order',
     dt_prod = dt_prod.where(np.abs(dt_prod_) <= tolerance_threshold, 0)
     dt_prod = dt_prod.where(np.abs(dt_prod_) > tolerance_threshold, 1)
     dt_prod = dt_prod.where(np.sign(eigmin) == -1, 0)
-    angle = angle * dt_prod.where(dt_prod > 0)
+
+    # angle = angle * dt_prod.where(dt_prod > 0)
     # shear = shear.where(dt_prod == 1)
     # rd = np.sqrt(np.abs(shear) * 86400 / da)
     # rd.plot(robust=True)
@@ -145,12 +146,13 @@ def find_ridges_spherical_hessian(da, sigma=.5, scheme='first_order',
     if return_eigvectors:
         return dt_prod.unstack().transpose(..., *original_dim_order), eigmin.unstack().transpose(...,
                                                                                                  *original_dim_order), \
+               dt_prod_.unstack().transpose(..., *original_dim_order), \
                eigvectors.unstack().transpose(..., *original_dim_order), gradient.unstack().transpose(...,
                                                                                                       *original_dim_order), \
                angle.transpose(..., *original_dim_order)
     else:
         return dt_prod.unstack().transpose(..., *original_dim_order), eigmin.unstack().transpose(...,
-                                                                                                 *original_dim_order),
+                                                                                                 *original_dim_order)
 
 
 def latlonsel(array, lat, lon, latname='lat', lonname='lon'):
@@ -253,7 +255,7 @@ def derivative_spherical_coords(da, dim=0, isglobal=True):
     dx = (np.pi/180) * (da.longitude.values[1] - da.longitude.values[0]) * EARTH_RADIUS * np.cos(y)
     dy = (np.pi/180) * (da.latitude.values[1] - da.latitude.values[0]) * EARTH_RADIUS
 
-    deriv = fourth_order_derivative(np.array(da.values), dim=dim, isglobal=isglobal)
+    deriv = fourth_order_derivative(da.values.astype('float32'), dim=dim, isglobal=isglobal)
     deriv = da.copy(data=deriv)
 
     if dim == 0:
