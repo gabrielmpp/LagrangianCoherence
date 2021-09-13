@@ -130,7 +130,8 @@ class LCS:
                                                       SETTLS_order=self.SETTLS_order,
                                                       verbose=verbose,
                                                       cyclic_xboundary=cyclic_xboundary, return_traj=return_traj,
-                                                      interp_order=traj_interp_order)
+                                                      interp_order=traj_interp_order,
+                                                      copy=True)
         if return_traj:
             x_trajs = x_departure.copy()
             y_trajs = y_departure.copy()
@@ -154,7 +155,7 @@ class LCS:
         def_tensor_norm = def_tensor.isel(derivatives=0).drop('derivatives').copy(data=def_tensor_norm)
         verboseprint("*---- Done eigenvalues ----*")
         def_tensor_norm = def_tensor_norm.unstack('points')
-        timestamp = u[self.timedim].values[0] if np.sign(timestep) == 1 else u[self.timedim].values[-1]
+        timestamp = u[self.timedim].values[-1] if np.sign(timestep) == 1 else u[self.timedim].values[0]
         def_tensor_norm['time'] = timestamp
         eigenvalues = def_tensor_norm.expand_dims(self.timedim)
         if self.return_dpts and return_traj:
