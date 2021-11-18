@@ -129,7 +129,7 @@ def shear_flow(lat_min, lat_max, lon_min, lon_max, dx, dy, nt, max_intensity=10,
 
 def ideal_vortex(lat_min, lat_max, lon_min, lon_max, dx, dy, nt,
                  max_intensity=10, radius=5, center=None, u_c=0, v_c=0,
-                 diag_factor=0,
+                 diag_factor=0, basic_zonal=2,
                  k=0):
     """
     Method to initialize an ideal vortex
@@ -193,7 +193,7 @@ def ideal_vortex(lat_min, lat_max, lon_min, lon_max, dx, dy, nt,
                 else:
                     mag = max_intensity * 0.5 * distance
 
-                u[y, x, t] = np.cos(theta[y, x, t]) * mag
+                u[y, x, t] = np.cos(theta[y, x, t]) * mag + basic_zonal
                 if new_x < 0:
                     v[y, x, t] = np.sin(theta[y, x, t] ) * mag
                 else:
@@ -218,8 +218,9 @@ subdomain={'latitude': slice(None, None), 'longitude': slice(None, None)}
 
 
 vortex_config_subtropical = {'lat_min': -88, 'lat_max': 89, 'lon_min': -180,'lon_max': 180, 'dx': 2,
-                             'dy': 2, 'u_c': 1, 'k': 0, 'diag_factor': 1,
-                         'v_c': -1, 'nt': 30, 'radius': 2, 'max_intensity': 40, 'center': [-55, -20]}
+                             'dy': 2, 'u_c': 0, 'k': 0, 'diag_factor': 1,
+                         'v_c': 0, 'nt': 8, 'radius': 2, 'max_intensity': 60, 'center': [-55, -20],
+                             'basic_zonal': 0}
 subdomain = {
     'latitude': slice(-20, 20),
     'longitude': slice(-60, -20),
@@ -261,7 +262,7 @@ plt.show()
 x_dye, y_dye = trajectory.parcel_propagation(ds.u, ds.v,
                                      timestep=-6 * 3600,
                                      propdim='time',
-                                     SETTLS_order=2,
+                                     SETTLS_order=4,
                                      copy=True,
                                      # C=wv,
                                      # Srcs=evap,
@@ -276,17 +277,22 @@ x, y = trajectory.parcel_propagation(ds.u, ds.v,
                                      # Srcs=evap,
                                      return_traj=True,
                                      cyclic_xboundary=True)
-rcs = LCS.LCS(timestep=6 * 3600, timedim='time', SETTLS_order=2 )
+rcs = LCS.LCS(timestep=6 * 3600, timedim='time', SETTLS_order=4 )
 ftle_r = rcs(ds.copy(), isglobal=True)
 ftle_r =np.log(ftle_r) / 2
 ftle_r = ftle_r.where(~xr.ufuncs.isnan(ftle_r), 0)
 
 
-ftle_r = np.log(np.sqrt(ftle_r))
-acs = LCS.LCS(timestep=-6 * 3600, timedim='time', SETTLS_order=2, )
+acs = LCS.LCS(timestep=-6 * 3600, timedim='time', SETTLS_order=4, )
 ftle_a = acs(ds.copy(), isglobal=True, )
 ftle_a = np.log(ftle_a) / 2
 
+(y_dye.isel(time=0) - y_dye.isel(time=-1)).plot.contourf(levels=20)
+plt.show()
+(x_dye.isel(time=-1) ).plot.contourf(levels=20)
+plt.show()
+ftle_a.isel(time=0).plot.contourf(levels=20)
+plt.show()
 
 # ---- Plots ---- #
 
@@ -299,7 +305,7 @@ ax.coastlines(color='white')
 plt.savefig(f'figs/{vortex_type}_windspeed.png')
 plt.close()
 
-np.sqrt(v**2).isel(time=0).sel(latitude=0, method='nearest').plot()
+np.sqrt(v**2).isel(time=0).sel(latitude=-20, method='nearest').plot()
 plt.title('Meridional speed across center (m/s)')
 plt.savefig(f'figs/{vortex_type}_meridional_speed_across_center.png')
 plt.close()
@@ -307,7 +313,7 @@ plt.close()
 
 
 fig, axs = plt.subplots(1, 3, subplot_kw={
-    'projection': ccrs.Orthographic(central_longitude=vortex_config['center'][0])}, figsize=[28, 8])
+    'projection': ccrs.Orthographic(central_longitude=vortex_config['center'][0])}, figsize=[16, 4])
 ftle_a.isel(time=0).plot(cmap=cmr.freeze, ax=axs[0], transform=ccrs.PlateCarree(), vmin=0)
 ftle_r.isel(time=0).plot(cmap=cmr.flamingo, ax=axs[1], transform=ccrs.PlateCarree(), vmin=0)
 (ftle_a.isel(time=0).where(ftle_a.isel(time=0)>0,0).drop('time') -
@@ -325,6 +331,7 @@ draw_circle = plt.Circle(vortex_config['center'], vortex_config['radius'], fill=
 axs[1].add_artist(draw_circle, )
 draw_circle = plt.Circle(vortex_config['center'], vortex_config['radius'], fill=False, color='red')
 axs[2].add_artist(draw_circle, )
+plt.show()
 plt.savefig(f'figs/FTLE_{vortex_type}.pdf')
 plt.close()
 

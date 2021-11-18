@@ -246,9 +246,22 @@ if __name__ == '__main__':
     lcs = LCS(timestep=float(sys.argv[1]), timedim=str(sys.argv[2]), SETTLS_order=int(sys.argv[3]),
               subdomain=None)
     input_path = str(sys.argv[5])
-    out = lcs(ds=input_path, isglobal=True, interp_to_common_grid=True, truncation=20, traj_interp_order=3)
-    print('Saving to ' + str(sys.argv[6]))
-    out.to_netcdf(sys.argv[6])
+    return_traj = True if sys.argv[7] == 'True' else False
+    if return_traj:
+        out, x_departure, y_departure = lcs(ds=input_path, isglobal=True, interp_to_common_grid=True, truncation=20,
+                                        traj_interp_order=3, return_traj=return_traj)
+        print('Saving to ' + str(sys.argv[6]))
+        out.to_netcdf(sys.argv[6])
+        x_departure.to_netcdf(str(sys.argv[6]).replace('SL_attracting', 'x_departure'))
+        y_departure.to_netcdf(str(sys.argv[6]).replace('SL_attracting', 'y_departure'))
+    else:
+        out = lcs(ds=input_path, isglobal=True, interp_to_common_grid=True, truncation=20,
+                                        traj_interp_order=3, return_traj=return_traj)
+        print('Saving to ' + str(sys.argv[6]))
+
+        out.to_netcdf(sys.argv[6])
+
+
     subprocess.call(['rm', input_path])
 
     # ncpath = '/work/scratch-nopw/gmpp/experiment_timelen_8_902214ae-5f9a-45d8-b45c-d53239154b37/' \
